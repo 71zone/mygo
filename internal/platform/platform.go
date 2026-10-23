@@ -377,7 +377,16 @@ type WindowOptions struct {
 	// UserAgentSuffix is appended to UserAgent, or to the webview's own
 	// user agent, after a space. The public package trims it.
 	UserAgentSuffix string
-	Zoom            float64
+	// StorageID names the persistent data store the page keeps its
+	// cookies, local storage, IndexedDB and cache in: pages with the same
+	// StorageID share one, pages with different ones share nothing, and
+	// "" is the app's default store. The public package checks it (1 to 64
+	// of a-z, A-Z, 0-9, ".", "_" and "-", case-sensitive), so backends may
+	// use it as it is. A backend that cannot give a page a store of its
+	// own, or not on this system, fails NewWindow or Surface.NewWebView
+	// with ErrUnsupported.
+	StorageID string
+	Zoom      float64
 	// TabFocusesLinks makes Tab reach links and form controls that are not
 	// text fields (macOS, WKPreferences.tabFocusesLinks); the other
 	// platforms reach them already.
