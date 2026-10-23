@@ -298,3 +298,8 @@ func (n *webViewNative) CapturePage(cb func([]byte, error)) {
 func (n *webViewNative) PrintToPDF(opts platform.PDFOptions, cb func([]byte, error)) {
 	n.web.PrintToPDF(opts, cb)
 }
+func (n *webViewNative) SendMouse(e platform.PageMouseEvent, done func(error)) {
+	n.web.SendMouse(e, done)
+}
+func (n *webViewNative) SendKey(e platform.PageKeyEvent, done func(error)) { n.web.SendKey(e, done) }
+func (n *webViewNative) InsertText(text string, done func(error))          { n.web.InsertText(text, done) }

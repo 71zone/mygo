@@ -1158,6 +1158,14 @@ func (w *window) decideResponse(decision ptr) bool {
 	return true
 }
 
+func (w *window) SendMouse(_ platform.PageMouseEvent, done func(error)) {
+	done(platform.ErrInputUnsupported)
+}
+func (w *window) SendKey(_ platform.PageKeyEvent, done func(error)) {
+	done(platform.ErrInputUnsupported)
+}
+func (w *window) InsertText(_ string, done func(error)) { done(platform.ErrInputUnsupported) }
+
 // printJobs holds the PrintToPDF operations running.
 var printJobs = map[ptr]*printJob{}
 

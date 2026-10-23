@@ -531,6 +531,24 @@ fmt.Printf("%d of %d\n", res.Active, res.Matches)
 win.Page().StopFindInPage()
 ```
 
+### Input events
+
+`SendMouse`, `SendKey` and `InsertText` give a page input as the system
+does: the page's events are trusted (`isTrusted` is true), which scripts
+cannot make, so pages that ignore `dispatchEvent` take them. They need no key
+window and no visible window (macOS and Windows; not Linux):
+
+```go
+p := win.Page()
+for _, t := range []mygo.MouseEventType{mygo.MouseMove, mygo.MouseDown, mygo.MouseUp} {
+	p.SendMouse(mygo.MouseEvent{Type: t, X: 220, Y: 172}) // CSS pixels in the viewport
+}
+// wait until the page shows the focus the click gave, then:
+p.InsertText("Xin chào")                     // an input method's commit
+p.SendKey(mygo.KeyEvent{Key: "Enter"})       // keydown, keypress, keyup
+```
+
+
 ### Printing, PDF and screenshots
 
 ```go
