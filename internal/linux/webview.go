@@ -86,6 +86,9 @@ func loadWebViews() {
 }
 
 func (s *surface) NewWebView(o *platform.WindowOptions, h platform.WindowHandler) (platform.WebView, error) {
+	if o.StorageID != "" {
+		return nil, errStorageID
+	}
 	if err := webKit(); err != nil {
 		return nil, err
 	}
