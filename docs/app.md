@@ -330,13 +330,18 @@ local and session storage, IndexedDB, service workers and caches, for
 example when the user signs out. Open pages keep what they hold in memory
 until they reload.
 
+`ClearBrowsingData` and `mygo.Cookies` act on the default store, the one
+pages without a [`StorageID`](windows.md#separate-sign-ins) use. The
+stores of pages with one are out of their reach, and keep their data.
+
 ### Cookies
 
 `mygo.Cookies` reads and changes the cookies of the app's pages, `HttpOnly`
-ones included: the default cookie store, which all windows share and
-which the system webview keeps from one run to the next. Set one, for
-example, to sign the pages in with a token the backend got, before the
-first page loads, or read the session a page's sign-in set:
+ones included: the default cookie store, which the windows without a
+`StorageID` share and which the system webview keeps from one run to the
+next. Set one, for example, to sign the pages in with a token the backend
+got, before the first page loads, or read the session a page's sign-in
+set:
 
 ```go
 err := mygo.Cookies.Set(mygo.Cookie{

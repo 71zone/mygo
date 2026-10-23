@@ -26,30 +26,19 @@ func TestStorageUUID(t *testing.T) {
 	}
 }
 
-// A StorageID gets the same data store each time and another ID another,
-// where this macOS has them.
-func TestDataStore(t *testing.T) {
+// The default store needs nothing, and a StorageID needs the data stores of
+// an identifier, which macOS 14 has. WebKit's data stores belong to the
+// main thread, so internal/e2e makes them.
+func TestCheckStorage(t *testing.T) {
 	load()
-	err := checkStorage("acct-a")
-	if errors.Is(err, platform.ErrUnsupported) {
-		t.Skip(err)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := checkStorage(""); err != nil {
 		t.Errorf("the default store: %v", err)
 	}
-	withPool(func() {
-		a, b := dataStore("acct-a"), dataStore("acct-b")
-		if a == 0 || b == 0 || a == b {
-			t.Errorf("data stores of acct-a %v and acct-b %v", a, b)
-		}
-		if again := dataStore("acct-a"); again != a {
-			t.Errorf("acct-a gave %v, then %v", a, again)
-		}
-		if !sendBool(a, "isPersistent") || sendBool(a, "isPersistent") != sendBool(b, "isPersistent") {
-			t.Error("a data store of a StorageID is not persistent")
-		}
-	})
+	err := checkStorage("acct-a")
+	if has := respondsTo(class("WKWebsiteDataStore"), "dataStoreForIdentifier:"); has != (err == nil) {
+		t.Errorf("data stores of an identifier: %v, StorageID: %v", has, err)
+	}
+	if err != nil && !errors.Is(err, platform.ErrUnsupported) {
+		t.Errorf("an error that is not ErrUnsupported: %v", err)
+	}
 }
