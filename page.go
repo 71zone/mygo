@@ -71,19 +71,23 @@ type PageOptions struct {
 	// storage, IndexedDB and cache it keeps, which stay from one run of the
 	// app to the next. Pages with the same StorageID, windows and web views
 	// alike, share one store and pages with different ones share nothing,
-	// as the accounts of one site signed in side by side need. By default
-	// a page uses the app's default store, which the pages without a
-	// StorageID share, and which App.ClearBrowsingData and Cookies act
-	// on, not the stores of the StorageIDs. An ID is 1 to 64 letters,
-	// digits, "-", "_" and "." (capitals and lowercase letters differ),
-	// or NewWebView returns an error matching ErrInvalidStorageID, and
-	// NewWindow panics with it. It is fixed once the page exists. A window
-	// the page opens (SetWindowOpenHandler) shares its store. Where the
-	// system's web view cannot keep stores apart, which is Linux, and
-	// macOS before 14, creating a page with one fails with an error
-	// matching errors.ErrUnsupported (NewWindow panics on it, as it does
-	// when it cannot make a window), and on Windows the WebView2 Runtime
-	// must be 1.0.1210.39 or newer, or the page fails to load.
+	// as the accounts of one site signed in side by side need. A window
+	// the page opens (SetWindowOpenHandler) shares its store. The ID is
+	// fixed once the page exists.
+	//
+	// Without one a page uses the default store, which the pages without
+	// a StorageID share: App.ClearBrowsingData and Cookies act on it only.
+	//
+	// An ID is 1 to 64 letters, digits, "-", "_" and "." (capitals and
+	// lowercase letters differ). NewWebView returns an error matching
+	// ErrInvalidStorageID for another, and NewWindow panics with it.
+	//
+	// Linux, and macOS before 14, cannot keep stores apart: creating a
+	// page with a StorageID fails with an error matching
+	// errors.ErrUnsupported (NewWindow panics on it, as it does when it
+	// cannot make a window). On Windows the WebView2 Runtime must be
+	// 1.0.1210.39 or newer, or the page gets no web view and its methods
+	// return that error.
 	StorageID string
 }
 
