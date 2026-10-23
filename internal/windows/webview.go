@@ -143,6 +143,13 @@ func (w *window) createWebView() {
 		w.webViewFailed(w.b.envErr)
 		return
 	}
+	env10, options, err := w.profileOptions()
+	if err != nil {
+		w.webViewFailed(err)
+		return
+	}
+	defer release(options)
+	defer release(env10)
 	fail := testFailWebViews > 0
 	if fail {
 		testFailWebViews--
@@ -178,7 +185,10 @@ func (w *window) createWebView() {
 		w.setUp(controller)
 	}, func(h uintptr) uintptr {
 		if w.host != nil {
-			return w.createEmbedded(h)
+			return w.createEmbedded(h, env10, options)
+		}
+		if options != 0 {
+			return comCall(env10, env10CreateControllerWithOptions, w.hwnd, options, h)
 		}
 		return comCall(w.b.env, envCreateController, w.hwnd, h)
 	})
@@ -306,7 +316,7 @@ func (w *window) setUp(controller uintptr) {
 		w.focusWebView()
 	}
 
-	if !w.b.holdForCookies(w) {
+	if w.opts.StorageID != "" || !w.b.holdForCookies(w) {
 		w.becomeReady()
 	}
 }
