@@ -42,8 +42,8 @@ func popupPage(title string) string {
 // popups that show about:blank documents, which have its origin. None of them
 // has the bridge, and no call of the page through them makes Go run a method.
 func TestBridgeAboutBlankPopupGetsNoBridge(t *testing.T) {
-	if runtime.GOOS == "linux" {
-		t.Skip("popups of WebKitGTK are independent pages, with no relation to their opener")
+	if runtime.GOOS != "darwin" {
+		t.Skip("only on macOS a popup is related to its opener (window.open returns it): elsewhere it is an independent window")
 	}
 	t.Setenv("MYGO_ENV", "production")
 	origin := gatePages(t, map[string]string{
