@@ -1,6 +1,7 @@
 package mygo
 
 import (
+	"errors"
 	"fmt"
 	"math"
 
@@ -39,7 +40,8 @@ type MouseEvent struct {
 	// viewport, where getBoundingClientRect puts the elements.
 	X, Y float64
 	// ClickCount is how many presses in a row this one is: 1, the
-	// default, for a click, 2 for a double click. MouseMove ignores it.
+	// default, for a click, 2 for the second press of a double click, as
+	// the user's presses count. MouseMove ignores it.
 	ClickCount int
 	Modifiers  Modifiers
 }
@@ -70,32 +72,46 @@ type KeyEvent struct {
 	Modifiers Modifiers
 }
 
+var (
+	errMouseType  = errors.New("mygo: SendMouse: unknown event type")
+	errMousePoint = errors.New("mygo: SendMouse: the point is not a finite number")
+	errKeyType    = errors.New("mygo: SendKey: unknown event type")
+)
+
 // SendMouse delivers a mouse event to the page as the system delivers the
 // mouse's: the page gets mousedown, mouseup, click and the other events
 // that follow, with isTrusted true, which a script's dispatchEvent never
-// has. A click is a MouseMove, a MouseDown and a MouseUp at one point:
+// has. A click is a MouseMove, a MouseDown and a MouseUp at one point; a
+// double click is a click and a second one with ClickCount 2:
 //
 //	for _, t := range []mygo.MouseEventType{mygo.MouseMove, mygo.MouseDown, mygo.MouseUp} {
 //		err := page.SendMouse(mygo.MouseEvent{Type: t, X: 220, Y: 172})
 //	}
 //
 // Input needs no key window, no active app and no visible window or web
-// view: the page gets the event where the point is. On macOS a MouseDown
-// gives the keyboard to the web view, as a click does, and WebKit drops a
-// MouseMove at a point the window's content paints over the web view. X
-// and Y stay CSS pixels at any page zoom. SendMouse returns when the page
-// took the event, not when the page handled it. WebKit queues mouse events
-// while one is in flight and takes keys at once, so wait for what a click
-// did (the focus it gave) before SendKey or InsertText.
+// view: the page gets the event where the point is. X and Y stay CSS pixels
+// at any page zoom. SendMouse returns when the page took the event, not when
+// the page handled it. The platforms differ in what they hold back:
+//
+//   - WebKit queues mouse events while one is in flight and takes keys at
+//     once, so wait for what a click did (the focus it gave) before
+//     SendKey or InsertText.
+//   - On macOS a MouseDown gives the keyboard to the web view, as a click
+//     does, and WebKit drops a MouseMove at a point that the window's
+//     content paints over the web view.
+//   - On Linux the web view must be shown, not in a hidden window: WebKitGTK
+//     drops the presses of one that is not, so SendMouse returns an error.
+//
+// In browsers it returns an error matching errors.ErrUnsupported.
 func (p *Page) SendMouse(e MouseEvent) error {
 	if p.w.content != nil {
 		return errNoPage
 	}
 	if e.Type > MouseUp {
-		return fmt.Errorf("mygo: SendMouse: unknown event type %d", e.Type)
+		return errMouseType
 	}
 	if math.IsNaN(e.X) || math.IsNaN(e.Y) || math.IsInf(e.X, 0) || math.IsInf(e.Y, 0) {
-		return fmt.Errorf("mygo: SendMouse: the point (%v, %v) is not a number", e.X, e.Y)
+		return errMousePoint
 	}
 	if e.ClickCount <= 0 {
 		e.ClickCount = 1
@@ -113,13 +129,18 @@ func (p *Page) SendMouse(e MouseEvent) error {
 //	err := page.SendKey(mygo.KeyEvent{Key: "Enter"})
 //
 // Like SendMouse it returns when the page took the event, not when the page
-// handled it. It gives an error for a key it does not know.
+// handled it, needs no key window and, except on Linux, no shown window (see
+// SendMouse), and gives an error for a key it does not know. The keys are
+// those of a US keyboard, with no input method composing, and a shortcut
+// with ModSuper is not reliable: macOS answers it as a key equivalent, not
+// as a key event. In browsers it returns an error matching
+// errors.ErrUnsupported.
 func (p *Page) SendKey(e KeyEvent) error {
 	if p.w.content != nil {
 		return errNoPage
 	}
 	if e.Type > KeyUp {
-		return fmt.Errorf("mygo: SendKey: unknown event type %d", e.Type)
+		return errKeyType
 	}
 	k, shift, ok := platform.PageKeyByName(e.Key)
 	if !ok {
@@ -133,13 +154,14 @@ func (p *Page) SendKey(e KeyEvent) error {
 	return p.input(func(n platform.Window, done func(error)) { n.SendKey(pe, done) })
 }
 
-// InsertText inserts text at the caret of the element that has the focus, as
-// an input method does when it commits what it composed: the element's
+// InsertText inserts text at the caret of the element that has the focus,
+// as an input method does when it commits what it composed: the element's
 // beforeinput and input events have the inputType "insertText", with
 // isTrusted true, and an editor in the page takes it as typed. The text goes
 // in as one edit, and newlines in it are not Enter keys. An element that does
 // not take text ignores it. It returns when the page took the text, not when
-// the page handled it.
+// the page handled it, and needs no key window or shown window. In browsers
+// it returns an error matching errors.ErrUnsupported.
 func (p *Page) InsertText(text string) error {
 	if p.w.content != nil {
 		return errNoPage

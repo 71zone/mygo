@@ -234,12 +234,12 @@ func (w *window) CapturePage(cb func([]byte, error))                       { cb(
 func (w *window) PrintToPDF(_ platform.PDFOptions, cb func([]byte, error)) { cb(nil, errUnsupported) }
 
 func (w *window) SendMouse(_ platform.PageMouseEvent, done func(error)) {
-	done(platform.ErrInputUnsupported)
+	done(platform.ErrUnsupported)
 }
 func (w *window) SendKey(_ platform.PageKeyEvent, done func(error)) {
-	done(platform.ErrInputUnsupported)
+	done(platform.ErrUnsupported)
 }
-func (w *window) InsertText(_ string, done func(error)) { done(platform.ErrInputUnsupported) }
+func (w *window) InsertText(_ string, done func(error)) { done(platform.ErrUnsupported) }
 
 func (w *window) CallAsyncFunction(_ string, cb func(string, error)) {
 	cb("", errUnsupported)

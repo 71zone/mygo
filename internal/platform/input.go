@@ -1,11 +1,5 @@
 package platform
 
-import "errors"
-
-// ErrInputUnsupported is what SendMouse, SendKey and InsertText fail with
-// where the platform has no way to deliver input to a page.
-var ErrInputUnsupported = errors.New("mygo: sending input to a page is not supported on this platform")
-
 // PageMouseKind is what a PageMouseEvent does.
 type PageMouseKind uint8
 

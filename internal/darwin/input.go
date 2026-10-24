@@ -104,8 +104,11 @@ func (w *window) SendMouse(e platform.PageMouseEvent, done func(error)) {
 			send(w.web, method, uintptr(ev))
 			return
 		}
-		// WebKit takes the pointer's moves from the owners of its tracking
-		// areas, not from the web view's own mouseMoved:.
+		// AppKit delivers a mouse move to the owner of the tracking area
+		// that holds the pointer, not to the view that has the area: the
+		// view's own mouseMoved: is not where WebKit listens. NSTrackingArea
+		// documents owner as that recipient, so the move goes to the owners
+		// of the web view's areas, as it would for the user's pointer.
 		areas := send(w.web, "trackingAreas")
 		for i := range sendInt(areas, "count") {
 			owner := send(send(areas, "objectAtIndex:", uintptr(i)), "owner")
