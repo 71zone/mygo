@@ -1775,6 +1775,11 @@ func (h *windowHandler) NavigationCommitted(url string) {
 		case doc.isAt(url):
 			doc.shown = true
 			own = true
+		default:
+			// Another document committed before the HTML did, and the
+			// web view drops the load of the HTML for it: a later commit
+			// of the same URL is not the app's.
+			w.html = nil
 		}
 	}
 	first := !w.navigated

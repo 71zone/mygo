@@ -286,3 +286,23 @@ func TestEmptySenderIsNotTrusted(t *testing.T) {
 		t.Errorf("OnDOMReady ran %d times for three messages, one with a URL", n)
 	}
 }
+
+// TestSupersededLoadHTMLDoesNotMakeAboutTrusted: HTML the app loaded, and
+// that another page replaced before it committed, is no document the app
+// made: an about:blank the page makes after that is not the app's.
+func TestSupersededLoadHTMLDoesNotMakeAboutTrusted(t *testing.T) {
+	bindForTest(t, "Superseded", &testService{})
+	w, fw := testWindow(t, WindowOptions{})
+	w.Page().LoadHTML("<p>app</p>", "")
+	onMain(func() { fw.H.NavigationCommitted("https://evil.example/") })
+	onMain(func() { fw.H.NavigationCommitted("about:blank") })
+	if m := call(t, fw, 1, "Superseded.Hello", "x"); m["ok"] != false {
+		t.Errorf("a call from an about:blank a page made after it replaced the app's HTML: ok = %v", m["ok"])
+	}
+	// The HTML the app loads next is its own.
+	w.Page().LoadHTML("<p>app</p>", "")
+	onMain(func() { fw.H.NavigationCommitted("about:blank") })
+	if m := call(t, fw, 2, "Superseded.Hello", "x"); m["ok"] != true {
+		t.Errorf("a call from the app's HTML: ok = %v (%v)", m["ok"], m["e"])
+	}
+}
