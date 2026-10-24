@@ -1019,9 +1019,11 @@ trust the page that navigated its own window to `about:blank`, so it
 ignores what that bridge posts and sends it nothing (the token below keeps
 what was queued for the page before from it). `NavigationCommitted` takes a
 commit of `about:blank` for the app's own while a `LoadHTML` waits for its
-commit, so a page that commits an `about:blank` of its own in the moment
-between the app's call and the web view's commit is taken for the app's
-document, until that document commits and replaces it.
+commit, and only until another document commits: the web view drops the
+load of the HTML for that one, so the wait ends. A page that commits an
+`about:blank` of its own in the moment between the app's call and the web
+view's commit is taken for the app's document, until that document commits
+and replaces it.
 
 An iframe of another origin must not be able to talk to Go either. The
 frames do not see the channel; besides that, each window has a random secret
