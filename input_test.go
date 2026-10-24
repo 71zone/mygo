@@ -3,8 +3,10 @@
 package mygo
 
 import (
+	"errors"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/internal/platform"
@@ -66,5 +68,76 @@ func TestPageInput(t *testing.T) {
 	w.Destroy()
 	if err := p.SendKey(KeyEvent{Key: "Enter"}); err == nil {
 		t.Error("SendKey to a destroyed window succeeded")
+	}
+}
+
+// InsertTextInto arms a guard in the page, inserts the text, and reads what
+// the guard decided: the guard is armed before the text goes in and read
+// after, and what it says becomes the error.
+func TestInsertTextInto(t *testing.T) {
+	w := NewWindow(WindowOptions{Hidden: true, URL: "https://example.com/"})
+	t.Cleanup(w.Destroy)
+	fw := fb.Windows()[len(fb.Windows())-1]
+	p := w.Page()
+
+	var calls []string
+	var arm, collect string
+	fw.AsyncFunction = func(body string) (string, error) {
+		switch {
+		case strings.Contains(body, "createDocumentFragment"):
+			calls = append(calls, "arm")
+			if !strings.Contains(body, `sel = "#composer", text = "xin chào"`) {
+				t.Errorf("the guard is not given the selector and the text: %s", body)
+			}
+			return arm, nil
+		case strings.Contains(body, "window["):
+			calls = append(calls, "collect")
+			return collect, nil
+		}
+		t.Errorf("unexpected script %s", body)
+		return "", errors.New("unexpected")
+	}
+	reply := func(state string) string { return `{"ok":true,"v":{"state":"` + state + `"}}` }
+	insert := func(armState, collectState string) error {
+		calls, arm, collect = nil, reply(armState), reply(collectState)
+		fw.Inserted = nil
+		err := p.InsertTextInto("#composer", "xin chào")
+		if armState == "armed" && !slices.Equal(calls, []string{"arm", "collect"}) {
+			t.Errorf("calls %v, want the guard armed, then read", calls)
+		}
+		return err
+	}
+
+	if err := insert("armed", "inserted"); err != nil || !slices.Equal(fw.Inserted, []string{"xin chào"}) {
+		t.Errorf("a match: %v, inserted %q", err, fw.Inserted)
+	}
+	err := insert("armed", "none")
+	if err == nil || errors.Is(err, ErrWrongFocus) {
+		t.Errorf("no text input event: %v", err)
+	}
+	if err := insert("armed", "lost"); err == nil || errors.Is(err, ErrWrongFocus) {
+		t.Errorf("a page that went away: %v", err)
+	}
+
+	collect = `{"ok":true,"v":{"state":"refused","target":"textarea#other"}}`
+	calls, arm = nil, reply("armed")
+	err = p.InsertTextInto("#composer", "xin chào")
+	if !errors.Is(err, ErrWrongFocus) || !strings.Contains(err.Error(), "textarea#other") {
+		t.Errorf("a refusal: %v", err)
+	}
+
+	// Nothing is inserted when the guard cannot be armed.
+	for _, state := range []string{"selector", "frame"} {
+		if err := insert(state, "inserted"); err == nil || len(fw.Inserted) != 0 || len(calls) != 1 {
+			t.Errorf("%s: %v, inserted %q, calls %v", state, err, fw.Inserted, calls)
+		}
+	}
+	if err := p.InsertTextInto("#composer", ""); err == nil {
+		t.Error("InsertTextInto of no text succeeded")
+	}
+
+	w.Destroy()
+	if err := p.InsertTextInto("#composer", "x"); err == nil {
+		t.Error("InsertTextInto to a destroyed window succeeded")
 	}
 }

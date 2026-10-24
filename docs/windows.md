@@ -575,6 +575,32 @@ covers, and on Windows a minimized window too. Two things differ:
   with a `MouseMove` therefore returns on Windows when it sent the move, not
   when the page took it; the page gets it before the next event.
 
+### Text into a named element
+
+A page that moves the focus by itself, as chat apps do when a message
+arrives, can take `InsertText`'s text in another field than the one the app
+checked a moment before. `InsertTextInto` takes a CSS selector and inserts
+nothing unless the element that takes the text matches it: the check runs
+inside the page, in the task that inserts the text, so the focus cannot move
+between the check and the insert. When it does not match, the text does not
+reach the page's own handlers either, and the error matches `ErrWrongFocus`:
+
+```go
+err := p.InsertTextInto("[data-composer]", "Xin chào")
+if errors.Is(err, mygo.ErrWrongFocus) {
+	// the page moved the focus: click the composer again
+}
+```
+
+The selector is matched against the element that takes the text (a focused
+field or editing host) and its ancestors, across open shadow roots. The
+guard is a listener on the top window of the document, so a focus inside a
+frame is refused before the insert, and a page that stops its
+`beforeinput` events in a capturing listener of the window, registered
+before MyGo's, hides them: the call then returns an error although the text
+may have gone in. The same error is returned when nothing that takes text
+has the focus (nothing goes in then). Call it one at a time for a page.
+
 ### Printing, PDF and screenshots
 
 ```go

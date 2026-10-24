@@ -1,9 +1,11 @@
 package mygo
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"sync/atomic"
 
 	"github.com/egoist/mygo/internal/platform"
 )
@@ -172,12 +174,147 @@ func (p *Page) SendKey(e KeyEvent) error {
 // in as one edit, and newlines in it are not Enter keys. An element that does
 // not take text ignores it. It returns when the page took the text, not when
 // the page handled it, and needs no key window or shown window. In browsers
-// it returns an error matching errors.ErrUnsupported.
+// it returns an error matching errors.ErrUnsupported. A page that moves the
+// focus by itself can put the text in another element than the one the
+// caller checked: see InsertTextInto.
 func (p *Page) InsertText(text string) error {
 	if p.w.content != nil {
 		return errNoPage
 	}
 	return p.input(func(n platform.Window, done func(error)) { n.InsertText(text, done) })
+}
+
+// ErrWrongFocus is what InsertTextInto returns, with nothing inserted, when
+// the element that would take the text is not the one it names.
+var ErrWrongFocus = errors.New("mygo: InsertTextInto: the focus is not on the element it names")
+
+var (
+	errInsertEmpty    = errors.New("mygo: InsertTextInto: no text to insert")
+	errInsertFrame    = errors.New("mygo: InsertTextInto: the focus is in a frame, whose input the page's window does not see")
+	errInsertNothing  = errors.New("mygo: InsertTextInto: the page took no text: no element that takes text has the focus")
+	errInsertNavigate = errors.New("mygo: InsertTextInto: the page changed before the insert could be checked")
+)
+
+// insertGuards numbers the guards InsertTextInto puts in pages.
+var insertGuards atomic.Uint64
+
+// insertGuardArm puts a guard in the page: a capturing beforeinput listener
+// on the window, which runs inside the page's own task of inserting the
+// text, before the text goes in, so that a page that moves the focus
+// between the caller's check and the insert cannot slip past it. It refuses
+// the trusted insert events of the text, the way a page cancels them, and
+// stops them reaching the page's own handlers (which a model that handles
+// beforeinput itself would take as the text); it lets through those whose
+// target, or an ancestor of it across shadow roots, matches the selector.
+// The format's arguments are the selector, the text and the guard's name,
+// as JSON.
+const insertGuardArm = `(() => {
+  const sel = %s, text = %s, key = %s;
+  try { document.createDocumentFragment().querySelector(sel); } catch (e) { return {state: "selector", message: String(e && e.message || e)}; }
+  let f = document.activeElement;
+  while (f && f.shadowRoot && f.shadowRoot.activeElement) f = f.shadowRoot.activeElement;
+  if (f && (f.localName === "iframe" || f.localName === "frame")) return {state: "frame"};
+  const g = {};
+  const on = (e) => {
+    if (!e.isTrusted || !/^insert(Text|LineBreak|Paragraph)$/.test(e.inputType) || (e.inputType === "insertText" && !text.includes(e.data))) return;
+    const path = e.composedPath(), t = path[0] instanceof Element ? path[0] : e.target;
+    for (let n = t; n; n = n.parentNode || n.host) {
+      if (n.nodeType === 1 && n.matches(sel)) { g.state = g.state || "inserted"; return; }
+    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    g.state = "refused";
+    g.target = t instanceof Element ? (t.localName + (t.id ? "#" + t.id : "")).slice(0, 80) : "";
+  };
+  addEventListener("beforeinput", on, true);
+  window[key] = () => { removeEventListener("beforeinput", on, true); delete window[key]; return g; };
+  return {state: "armed"};
+})()`
+
+// insertGuardCollect takes the guard of a name out of the page and returns
+// what it decided.
+const insertGuardCollect = `(() => { const f = window[%s]; return f ? f() : {state: "lost"}; })()`
+
+type insertGuardResult struct {
+	State   string `json:"state"`
+	Message string `json:"message"`
+	Target  string `json:"target"`
+}
+
+// InsertTextInto is InsertText that inserts nothing unless the element that
+// takes the text matches selector, a CSS selector: the focused text field or
+// editing host, or an element it is inside, shadow roots included. It is for
+// a page that moves the focus by itself, where checking the focus and then
+// calling InsertText may put the text in another field: the check is made
+// inside the page, in the task that inserts the text, after the focus is
+// final, so no focus change can come between the check and the insert. When
+// the element does not match, the text does not reach the page at all, not
+// even its handlers of beforeinput, and InsertTextInto returns an error that
+// matches ErrWrongFocus and says what had the focus:
+//
+//	err := page.InsertTextInto("[data-composer]", "Xin chào")
+//	if errors.Is(err, mygo.ErrWrongFocus) {
+//		// the page moved the focus: click the composer again
+//	}
+//
+// It returns an error, and the text may have gone in, when no check could be
+// made: when the page did not tell that it took the text, which is also what
+// a focus on an element that takes no text looks like (nothing went in then),
+// or when its first document went away. The guard is a listener of the top
+// document's window: a page that stops its events before MyGo's listener
+// runs (a capturing listener of the window registered earlier) hides them,
+// and a focus in a frame is refused before the insert, as its events do not
+// reach the window. Call it one at a time for a page. Like InsertText it
+// returns when the page took the text, and in browsers it returns an error.
+func (p *Page) InsertTextInto(selector, text string) error {
+	if p.w.content != nil {
+		return errNoPage
+	}
+	if text == "" {
+		return errInsertEmpty
+	}
+	args := make([]any, 3)
+	key := fmt.Sprintf("__mygoInsert%d", insertGuards.Add(1))
+	for i, v := range []string{selector, text, key} {
+		b, _ := json.Marshal(v)
+		args[i] = string(b)
+	}
+	armed, err := EvalAs[insertGuardResult](p, fmt.Sprintf(insertGuardArm, args...))
+	if err != nil {
+		return err
+	}
+	switch armed.State {
+	case "armed":
+	case "selector":
+		return fmt.Errorf("mygo: InsertTextInto: invalid selector %q: %s", selector, armed.Message)
+	case "frame":
+		return errInsertFrame
+	default:
+		return fmt.Errorf("mygo: InsertTextInto: unexpected guard state %q", armed.State)
+	}
+	insertErr := p.InsertText(text)
+	// The guard is read through the connection the text went in by, so that
+	// the page ran the insert first.
+	res, err := EvalAs[insertGuardResult](p, fmt.Sprintf(insertGuardCollect, args[2]))
+	if insertErr != nil {
+		return insertErr
+	}
+	if err != nil {
+		return err
+	}
+	switch res.State {
+	case "inserted":
+		return nil
+	case "refused":
+		if res.Target != "" {
+			return fmt.Errorf("%w (it is on %s)", ErrWrongFocus, res.Target)
+		}
+		return ErrWrongFocus
+	case "lost":
+		return errInsertNavigate
+	default:
+		return errInsertNothing
+	}
 }
 
 // input runs send on the main thread and waits for its done.
