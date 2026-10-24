@@ -604,6 +604,37 @@ fmt.Printf("%d of %d\n", res.Active, res.Matches)
 win.Page().StopFindInPage()
 ```
 
+### Input events
+
+`SendMouse`, `SendKey` and `InsertText` give a page input as the system
+does: the page's events are trusted (`isTrusted` is true), which scripts
+cannot make, so pages that ignore `dispatchEvent` take them. They need no key
+window, no active app and, except on Linux, no shown window:
+
+```go
+p := win.Page()
+for _, t := range []mygo.MouseEventType{mygo.MouseMove, mygo.MouseDown, mygo.MouseUp} {
+	p.SendMouse(mygo.MouseEvent{Type: t, X: 220, Y: 172}) // CSS pixels in the viewport
+}
+// wait until the page shows the focus the click gave, then:
+p.InsertText("Xin chào")                // what an input method commits
+p.SendKey(mygo.KeyEvent{Key: "Enter"})  // keydown, keypress, keyup
+```
+
+The methods return when the page took the input, not when it handled it:
+WebKit queues a click while it handles one, and takes keys at once, so a key
+sent right after a click can overtake it. Wait for what the click did, such
+as the focus, before the text and the key. A double click is a click and a
+second one with `ClickCount: 2`. The keys of `SendKey` are those of a US
+keyboard (Enter, Tab, Escape, Backspace, Delete, the arrows, Home, End,
+Page Up and Down, space, letters and digits; a capital letter is the letter
+with Shift); other text goes through `InsertText`. Only the primary button
+and no wheel, drag or touch; no input method composes, and a shortcut with
+`ModSuper` is not reliable (macOS answers it as a key equivalent). On Linux
+the web view must be shown: for a hidden window `SendMouse` and `SendKey`
+return an error, as WebKitGTK drops their presses. Browsers return an error
+matching `errors.ErrUnsupported`.
+
 ### Printing, PDF and screenshots
 
 ```go

@@ -557,6 +557,15 @@ type Page interface {
 	CapturePage(cb func(png []byte, err error))
 	// PrintToPDF renders the page as a PDF document.
 	PrintToPDF(opts PDFOptions, cb func(pdf []byte, err error))
+	// SendMouse and SendKey deliver one input event to the page, and
+	// InsertText inserts text at its caret, as the system delivers the
+	// input of the user's devices and input methods: the page's events
+	// are trusted (isTrusted is true), not the ones scripts make. done
+	// runs on the main thread once the page took the input, or with the
+	// reason it could not.
+	SendMouse(e PageMouseEvent, done func(err error))
+	SendKey(e PageKeyEvent, done func(err error))
+	InsertText(text string, done func(err error))
 	// DroppedFiles returns the paths of the files of the latest drop on
 	// the page and forgets them. The page reports the drop itself (a
 	// "drop" message); backends record the paths before the page sees it.
