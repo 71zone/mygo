@@ -140,9 +140,16 @@ type inputPage struct {
 }
 
 func newInputPage(t *testing.T, w *mygo.Window) *inputPage {
-	w.Page().LoadHTML(inputFixture, "")
-	waitFor(t, w, "window.R && R.ready")
-	return &inputPage{t: t, w: w, p: w.Page()}
+	ip := newInputPageOf(t, w.Page())
+	ip.w = w
+	return ip
+}
+
+// newInputPageOf loads the fixture into a page, as a web view's.
+func newInputPageOf(t *testing.T, p *mygo.Page) *inputPage {
+	p.LoadHTML(inputFixture, "")
+	waitForPage(t, p, "window.R && R.ready")
+	return &inputPage{t: t, p: p}
 }
 
 func (ip *inputPage) eval(code string) {
