@@ -368,6 +368,23 @@ it in windows that show content you do not control. Frames embedded in a
 page never call Go, whatever their origin; only the top-level page of a
 window does.
 
+A page that may not call Go does not get the bridge at all. It finds no
+`window.mygo` and no `window.__mygo`, and no script of the page can post a
+message to Go: the channel the bridge talks to Go through,
+`webkit.messageHandlers.mygo` in WebKit and `chrome.webview` in WebView2, is
+taken out of the page before its scripts run, from the pages that may call
+Go as well, and from every frame inside any page. Go ignores everything a
+page that may not call Go posts besides, such as the messages for window
+drags, Escape and dropped files, and so does `OnDOMReady` for such a page:
+it runs when the page has finished loading, as there is no bridge to say
+the DOM is ready. Events never reach it, and neither do the paths of dropped
+files. `PageOptions.PreloadScript` still runs in the page, without
+`window.mygo`; `FindInPage` brings the part of the bridge it needs for the
+time of the search. The page can still see that it runs in a web view,
+and which one: `window.webkit` stays an empty object in WebKit, which does not
+let a page remove it, and the user agent, the client hints and the
+differences of the engines are the web view's own.
+
 ## From Go to the page
 
 Events are the way to tell pages about changes. To run code in a page,
