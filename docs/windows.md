@@ -478,7 +478,7 @@ mygo.NewWindow(mygo.WindowOptions{
 
 | Option | |
 |---|---|
-| `PreloadScript` | JavaScript run before every page's own scripts |
+| `PreloadScript` | JavaScript run before every page's own scripts, in the pages of other sites too, which have no `window.mygo` |
 | `TrustedOrigins` | other origins whose pages may call Go, see [who may call](bindings.md#who-may-call) |
 | `DevTools` | `DevToolsAuto` (the inspector in development builds), `DevToolsEnabled` or `DevToolsDisabled`, which also turns WebView2's own keys, as F5 reloading, on or off (Windows); for a window of native UI, its [inspector](ui/inspector.md) |
 | `ZoomFactor`, `UserAgent` | the page's zoom (1 is 100%) and user agent |
@@ -497,7 +497,7 @@ Page events, on `win.Page()`:
 |---|---|
 | `OnWillNavigate(func(e *mygo.NavigateEvent))` | the page is about to navigate, for example after a click on a link; `e.PreventDefault()` cancels it. Not called for `LoadURL` and its siblings. |
 | `OnDidNavigate(func(url string))` | a navigation committed |
-| `OnDOMReady` | the page's DOM is ready (`DOMContentLoaded`) |
+| `OnDOMReady` | the page's DOM is ready (`DOMContentLoaded`); for a page that may not call Go, which has no bridge to tell, when it finished loading |
 | `OnDidFinishLoad` | the page finished loading |
 | `OnDidFailLoad(func(err *mygo.LoadError))` | the page failed to load |
 | `OnPageTitleUpdated(func(e *mygo.TitleEvent))` | the page's `<title>` changed; preventing the event keeps the window title as it is |
@@ -603,6 +603,9 @@ res, err := win.Page().FindInPage("mygo", mygo.FindOptions{FindNext: true})
 fmt.Printf("%d of %d\n", res.Active, res.Matches)
 win.Page().StopFindInPage()
 ```
+
+A page that may not call Go has no bridge to find with: `FindInPage` brings
+the part it needs, and `StopFindInPage` takes it away again.
 
 ### Input events
 

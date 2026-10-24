@@ -1,0 +1,263 @@
+//go:build !js
+
+package mygo
+
+import (
+	"encoding/json/v2"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/egoist/mygo/internal/bridge"
+)
+
+// bridgeAllows is what the bridge in the page does with its Trust
+// (packages/bridge/src/trust.ts), for a page at rawURL.
+func bridgeAllows(tr bridge.Trust, rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	scheme, host := strings.ToLower(u.Scheme), strings.ToLower(u.Host)
+	if slices.Contains(tr.Schemes, scheme) || slices.Contains(tr.Origins, "*") || slices.Contains(tr.Origins, scheme+"://"+host) {
+		return true
+	}
+	return tr.Loopback && (scheme == "http" || scheme == "https") && slices.Contains([]string{"localhost", "127.0.0.1", "::1"}, strings.ToLower(u.Hostname()))
+}
+
+// TestBridgeTrust: the pages that get the bridge are those isTrusted
+// trusts. The cases are those of packages/bridge/src/trust.test.ts.
+func TestBridgeTrust(t *testing.T) {
+	if err := Protocol.Handle("trusted", http.NotFoundHandler()); err != nil {
+		t.Fatal(err)
+	}
+	defer Protocol.Unhandle("trusted")
+	t.Setenv("MYGO_DEV_URL", "http://localhost:5173")
+	urls := []string{
+		"https://evil.example/",
+		"https://partner.example/page",
+		"HTTPS://Partner.Example/page",
+		"https://partner.example.evil.com/",
+		"http://partner.example/",
+		"trusted://localhost/",
+		"mygo://localhost/index.html",
+		"file:///tmp/index.html",
+		"about:blank",
+		"data:text/html,x",
+		"http://localhost:5173/",
+		"http://localhost:5174/", // loopback in development
+		"https://127.0.0.1:8443/",
+		"http://[::1]:3000/",
+		"http://192.168.1.2:5173/",
+		"ftp://localhost/",
+	}
+	for _, windows := range []bool{false, true} {
+		defer func(v bool) { schemeHosts = v }(schemeHosts)
+		schemeHosts = windows
+		for _, opts := range []PageOptions{{TrustedOrigins: []string{"https://partner.example/"}}, {TrustedOrigins: []string{"*"}}, {}} {
+			w := &Window{trustedOrigins: opts.TrustedOrigins}
+			tr := w.bridgeTrust()
+			if tr.Schemes == nil || tr.Origins == nil {
+				t.Fatalf("Trust must hold arrays: %+v", tr)
+			}
+			for _, u := range urls {
+				pageURL := u
+				if windows {
+					// WebView2 serves custom schemes at http://<scheme>.localhost.
+					pageURL = strings.NewReplacer("trusted://localhost", "http://trusted.localhost", "mygo://localhost", "http://mygo.localhost").Replace(u)
+				}
+				if got, want := bridgeAllows(tr, pageURL), w.isTrusted(appOrigin(pageURL)); got != want {
+					t.Errorf("windows=%v %v: the bridge allows %s: %v, isTrusted: %v", windows, opts.TrustedOrigins, pageURL, got, want)
+				}
+			}
+		}
+	}
+}
+
+// TestBridgeScripts: every page gets the preload script, the bridge only
+// decides for itself what trust it has, and the frames inside get the
+// script that hides the channel to Go.
+func TestBridgeScripts(t *testing.T) {
+	_, fw := testWindow(t, WindowOptions{Page: PageOptions{PreloadScript: "window.preloaded = 1", TrustedOrigins: []string{"https://Partner.example/"}}})
+	scripts := fw.UserScripts()
+	if len(scripts) != 4 {
+		t.Fatalf("scripts: %d, want the bridge, the preferences, the preload script and the one hiding the channel", len(scripts))
+	}
+	var cfg struct {
+		Trust bridge.Trust `json:"trust"`
+	}
+	m := strings.LastIndex(scripts[0].Source, "})(")
+	if err := json.Unmarshal([]byte(strings.TrimSuffix(scripts[0].Source[m+3:], ");")), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(cfg.Trust.Origins, "https://partner.example") || !slices.Contains(cfg.Trust.Schemes, "about") {
+		t.Errorf("trust in the bridge configuration: %+v", cfg.Trust)
+	}
+	if scripts[0].AllFrames || scripts[2].AllFrames || scripts[2].Source != "window.preloaded = 1" {
+		t.Errorf("the bridge and the preload script are for the top frame: %+v", scripts)
+	}
+	if hide := scripts[3]; !hide.AllFrames || hide.Source != bridge.HideScript {
+		t.Errorf("the last script hides the channel from every frame: %+v", hide)
+	}
+}
+
+// forgeries are the messages a page that has the secret and a way to the
+// native channel could post besides calls.
+var forgeries = []string{
+	`{"t":"dom-ready"}`,
+	`{"t":"drag"}`,
+	`{"t":"dblclick"}`,
+	`{"t":"drop","x":1,"y":2}`,
+	`{"t":"chan-ack","c":5,"k":"tok","n":1}`,
+	`{"t":"chan-close","c":5,"k":"tok"}`,
+	`{"t":"escape"}`, // last: a panel it closes takes the others' effects with it
+}
+
+// pageEffects counts what the messages of forgeries did.
+type pageEffects struct {
+	domReady, drops atomic.Int32
+}
+
+func watchEffects(w *Window) *pageEffects {
+	e := &pageEffects{}
+	w.Page().OnDOMReady(func() { e.domReady.Add(1) })
+	w.OnFileDrop(func(*FileDropEvent) { e.drops.Add(1) })
+	return e
+}
+
+// TestUntrustedMessagesAreIgnored: only trusted pages may post what is not
+// a call, whatever they know: the messages do nothing for a page that is
+// not trusted, nor for a sender that is not, while the page showing is.
+func TestUntrustedMessagesAreIgnored(t *testing.T) {
+	w, fw := testWindow(t, WindowOptions{Panel: true, Page: PageOptions{TrustedOrigins: []string{"https://partner.example"}}})
+	effects := watchEffects(w)
+	post := func(from string) {
+		for _, msg := range forgeries {
+			fw.Dropped = []string{"/tmp/file"}
+			pageAt(fw, from, msg)
+		}
+		onMain(func() {}) // what the messages posted to the main thread has run
+	}
+	noEffect := func(what string) {
+		t.Helper()
+		if n := effects.domReady.Load(); n != 0 {
+			t.Errorf("%s: OnDOMReady ran %d times", what, n)
+		}
+		if n := effects.drops.Load(); n != 0 {
+			t.Errorf("%s: OnFileDrop ran %d times", what, n)
+		}
+		if fw.DragStarts != 0 || fw.TitleBarDoubleClicks != 0 {
+			t.Errorf("%s: window drags %d, double clicks %d", what, fw.DragStarts, fw.TitleBarDoubleClicks)
+		}
+		if w.IsDestroyed() {
+			t.Errorf("%s: Escape closed the panel", what)
+		}
+		if len(fw.Dropped) != 1 {
+			t.Errorf("%s: the dropped files were taken", what)
+		}
+	}
+
+	// The page is not trusted.
+	onMain(func() { fw.H.NavigationCommitted("https://evil.example/") })
+	post("https://evil.example/")
+	noEffect("an untrusted page")
+
+	// The page showing is trusted, the sender is not: a frame, or a page
+	// that navigated away.
+	onMain(func() { fw.H.NavigationCommitted("https://partner.example/") })
+	post("https://evil.example/")
+	post("")
+	noEffect("an untrusted sender")
+
+	// A trusted sender gets what the messages do.
+	post("https://partner.example/")
+	if effects.domReady.Load() != 1 || effects.drops.Load() != 1 || fw.DragStarts != 1 || fw.TitleBarDoubleClicks != 1 {
+		t.Errorf("the messages of a trusted page: ready %d, drops %d, drags %d, double clicks %d",
+			effects.domReady.Load(), effects.drops.Load(), fw.DragStarts, fw.TitleBarDoubleClicks)
+	}
+	if !w.IsDestroyed() {
+		t.Error("Escape in a trusted page did not close the panel")
+	}
+}
+
+// TestUntrustedChannelMessages: a page that is not trusted can neither
+// close the channel of another page nor close a channel before it opens.
+func TestUntrustedChannelMessages(t *testing.T) {
+	s := &streamer{sent: make(chan error, 16), stopped: make(chan error, 1)}
+	bindForTest(t, "UntrustedStream", s)
+	w, fw := testWindow(t, WindowOptions{})
+	page(fw, `{"t":"call","id":1,"k":"tok","m":"UntrustedStream.Wait","a":[9]}`)
+	received(t, fw, func(m map[string]any) bool { return m["c"] == float64(9) && m["p"] == "ready" })
+
+	pageAt(fw, "https://evil.example/", `{"t":"chan-close","c":9,"k":"tok"}`)
+	pageAt(fw, "https://evil.example/", `{"t":"chan-close","c":12,"k":"tok"}`)
+	onMain(func() {})
+	select {
+	case err := <-s.stopped:
+		t.Fatalf("a page that is not trusted closed a channel: %v", err)
+	default:
+	}
+	onMain(func() {
+		if len(w.closedEarly) != 0 {
+			t.Errorf("a channel was closed before it opened: %v", w.closedEarly)
+		}
+	})
+	page(fw, `{"t":"chan-close","c":9,"k":"tok"}`)
+	<-s.stopped
+}
+
+// TestUntrustedCallsFail: a call from a sender that is not trusted fails,
+// whatever page is showing.
+func TestUntrustedCallsFail(t *testing.T) {
+	svc := &testService{}
+	bindForTest(t, "SenderTrust", svc)
+	_, fw := testWindow(t, WindowOptions{})
+	pageAt(fw, "https://evil.example/", `{"t":"call","id":1,"k":"tok","m":"SenderTrust.Hello","a":["x"]}`)
+	m := received(t, fw, func(m map[string]any) bool { return m["t"] == "reply" && m["id"] == float64(1) })
+	if m["ok"] != false || svc.calls.Load() != 0 {
+		t.Errorf("a call from another origin: %v, ran %d times", m, svc.calls.Load())
+	}
+	if m := call(t, fw, 2, "SenderTrust.Hello", "x"); m["ok"] != true {
+		t.Errorf("the page's own call: %v", m)
+	}
+}
+
+// TestDOMReadyWithoutBridge: a page that is not trusted has no bridge to
+// tell that its DOM is ready, so OnDOMReady runs when it finished loading.
+func TestDOMReadyWithoutBridge(t *testing.T) {
+	w, fw := testWindow(t, WindowOptions{})
+	effects := watchEffects(w)
+	onMain(func() {
+		fw.H.NavigationCommitted("about:blank")
+		fw.H.LoadFinished()
+	})
+	if n := effects.domReady.Load(); n != 0 {
+		t.Errorf("OnDOMReady ran %d times for a trusted page before its bridge told", n)
+	}
+	onMain(func() {
+		fw.H.NavigationCommitted("https://evil.example/")
+		fw.H.LoadFinished()
+	})
+	if n := effects.domReady.Load(); n != 1 {
+		t.Errorf("OnDOMReady ran %d times for a page that is not trusted, want 1", n)
+	}
+}
+
+// TestFindScript: FindInPage brings what it needs to a page that has no
+// bridge, and only to such a page.
+func TestFindScript(t *testing.T) {
+	w, fw := testWindow(t, WindowOptions{})
+	trusted := w.findScript("x", FindOptions{})
+	if strings.Contains(trusted, "function") {
+		t.Errorf("trusted page: %s", trusted)
+	}
+	onMain(func() { fw.H.NavigationCommitted("https://evil.example/") })
+	untrusted := w.findScript("x", FindOptions{})
+	if !strings.HasPrefix(untrusted, "(window.__mygo || (function(__MYGO_CONFIG__){") || !strings.Contains(untrusted, `"find":true`) ||
+		!strings.HasSuffix(untrusted, `, window.__mygo.find("x", {"backward":false,"matchCase":false,"next":false}))`) {
+		t.Errorf("untrusted page: %.200s", untrusted)
+	}
+}

@@ -26,6 +26,26 @@ type Config struct {
 	// mygo.locale and mygo.dir from document start.
 	Locale string `json:"locale"`
 	Dir    string `json:"dir"`
+	// Trust says which pages get the bridge: the others find none of it
+	// (neither window.mygo nor the channel to Go).
+	Trust Trust `json:"trust"`
+	// Find installs only what Page.FindInPage needs, in a page that has no
+	// bridge, and takes it away with StopFindInPage.
+	Find bool `json:"find,omitempty"`
+}
+
+// Trust is the rule of the core's isTrusted, as the bridge applies it to
+// its page at document start. The slices are never nil, for the bridge
+// reads them as arrays.
+type Trust struct {
+	// Schemes are the schemes whose pages are trusted, whatever the host.
+	Schemes []string `json:"schemes"`
+	// Origins are the lower case origins, scheme://host[:port], of trusted
+	// pages; "*" trusts every page.
+	Origins []string `json:"origins"`
+	// Loopback trusts the pages of http and https on localhost, 127.0.0.1
+	// and ::1.
+	Loopback bool `json:"loopback"`
 }
 
 // Script returns the bridge source configured for one window.
@@ -33,6 +53,15 @@ func Script(cfg Config) string {
 	b, _ := json.Marshal(cfg)
 	return "(function(__MYGO_CONFIG__){\n" + source + "})(" + string(b) + ");"
 }
+
+// HideScript hides the channel to Go from the pages in the frames of a
+// window: Script does it in the top frame, where the bridge takes the
+// channel, and this script in the frames inside it, which have no bridge but
+// find the channel as well. It is for every frame, and only does anything
+// in those that are not the top one. The channel of WebKit is the message
+// handler, which `webkit.messageHandlers` reaches through the prototype of
+// `webkit`; that of WebView2 is `chrome.webview`.
+const HideScript = `if(window!==window.top){try{delete Object.getPrototypeOf(window.webkit).messageHandlers}catch(e){}try{delete window.chrome.webview}catch(e){}}`
 
 // TitleBarEvent tells a page of a window with a hidden title bar the room
 // the window controls take. The bridge keeps it in the --mygo-titlebar-*

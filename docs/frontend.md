@@ -136,7 +136,9 @@ WebView2 serves it.
 
 ## The mygo-runtime package
 
-MyGo injects its runtime into every page as `window.mygo`. The
+MyGo injects its runtime into the app's own pages as `window.mygo`, and
+those of the origins a window trusts (see [who may
+call](bindings.md#who-may-call)); other pages do not have it. The
 `mygo-runtime` npm package, which new projects depend on, gives it types
 and imports; the generated client is built on it.
 
@@ -390,7 +392,8 @@ app's window on the app: see [Windows](windows.md#pages).
 ## Preload scripts
 
 `PageOptions.PreloadScript` runs JavaScript in every page of the window
-before the page's own scripts, once `window.mygo` exists.
+before the page's own scripts, once `window.mygo` exists in the pages that
+get it: it runs in the pages of other sites as well, without `window.mygo`.
 
 ## The web inspector
 

@@ -93,10 +93,14 @@ func readyWindow(t *testing.T, opts WindowOptions) (*Window, *fake.Window) {
 	return w, fw
 }
 
-// page simulates the page bridge posting a message.
-func page(fw *fake.Window, msg string) {
+// page simulates the page bridge posting a message, from the page testWindow
+// loads.
+func page(fw *fake.Window, msg string) { pageAt(fw, "about:blank", msg) }
+
+// pageAt simulates the bridge posting a message from the document at url.
+func pageAt(fw *fake.Window, url, msg string) {
 	s := secret(fw)
-	onMain(func() { fw.H.Message(s + msg) })
+	onMain(func() { fw.H.Message(s+msg, url) })
 }
 
 // secret returns the secret the bridge of fw prefixes its messages with.
@@ -166,8 +170,8 @@ func TestWindowDefaults(t *testing.T) {
 		t.Error("Tab should reach links and form controls by default")
 	}
 	// The bridge configuration, then the settings of the desktop, which it
-	// tells.
-	if len(o.UserScripts) != 2 || !strings.Contains(o.UserScripts[0].Source, `"windowId":`+fmt.Sprint(w.ID())) {
+	// tells, and the script that hides the channel to Go from frames.
+	if len(o.UserScripts) != 3 || !strings.Contains(o.UserScripts[0].Source, `"windowId":`+fmt.Sprint(w.ID())) {
 		t.Errorf("bridge script not configured: %v", o.UserScripts)
 	}
 	if !w.IsVisible() {
@@ -192,9 +196,9 @@ func TestWindowOptions(t *testing.T) {
 	if c := o.BackgroundColor; c == nil || *c != (platform.Color{R: 0x11, G: 0x22, B: 0x33, A: 0x80}) {
 		t.Errorf("background color: %v", c)
 	}
-	// The bridge configuration, the settings of the desktop, then the app's
-	// preload script.
-	if len(o.UserScripts) != 3 || o.UserScripts[2].Source != "window.x = 1" {
+	// The bridge configuration, the settings of the desktop, the app's
+	// preload script, then the script hiding the channel to Go from frames.
+	if len(o.UserScripts) != 4 || o.UserScripts[2].Source != "window.x = 1" {
 		t.Errorf("preload script: %v", o.UserScripts)
 	}
 	if o.Parent == nil {
@@ -554,8 +558,8 @@ func TestMessagesNeedTheSecret(t *testing.T) {
 	bindForTest(t, "Secret", svc)
 	_, fw := readyWindow(t, WindowOptions{})
 	forged := `{"t":"call","id":1,"k":"tok","m":"Secret.Hello","a":["x"]}`
-	onMain(func() { fw.H.Message(forged) })
-	onMain(func() { fw.H.Message("wrong" + forged) })
+	onMain(func() { fw.H.Message(forged, "about:blank") })
+	onMain(func() { fw.H.Message("wrong"+forged, "about:blank") })
 	time.Sleep(50 * time.Millisecond)
 	if n := svc.calls.Load(); n != 0 {
 		t.Fatalf("forged messages ran the method %d times", n)
@@ -905,7 +909,7 @@ func TestEventsWaitForDOMReady(t *testing.T) {
 	received(t, fw, func(m map[string]any) bool { return m["n"] == "test:early" && m["p"] == "first" })
 
 	// After a navigation, events wait for the new page.
-	onMain(func() { fw.H.NavigationCommitted("https://next.example/") })
+	onMain(func() { fw.H.NavigationCommitted("about:blank#next") })
 	n := len(fw.Scripts())
 	_ = ev.Emit(w, "second")
 	time.Sleep(20 * time.Millisecond)
@@ -943,7 +947,7 @@ func TestHiddenTitleBar(t *testing.T) {
 
 	// A later page hears it once its DOM is ready: the script the backend
 	// runs at document start may be older.
-	onMain(func() { fw.H.NavigationCommitted("https://next.example/") })
+	onMain(func() { fw.H.NavigationCommitted("about:blank#next") })
 	n := len(fw.Scripts())
 	page(fw, `{"t":"dom-ready"}`)
 	received(t, fw, titleBar(23, 40, 0))
@@ -1830,7 +1834,7 @@ func TestThemePreferencesReachThePage(t *testing.T) {
 		t.Errorf("preferences after a change = %+v", p)
 	}
 	scripts := onMainValue(func() []platform.UserScript { return slices.Clone(fw.Opts.UserScripts) })
-	if len(scripts) != 3 || !strings.Contains(scripts[0].Source, `"secret"`) || scripts[2].Source != "preload();" {
+	if len(scripts) != 4 || !strings.Contains(scripts[0].Source, `"secret"`) || scripts[2].Source != "preload();" {
 		t.Errorf("user scripts after a change = %+v", scripts)
 	} else if src := scripts[preferencesScriptIndex].Source; !strings.Contains(src, `"accent":null`) || !strings.Contains(src, `"textScale":2`) {
 		t.Errorf("preferences script after a change = %s", src)
@@ -1856,8 +1860,8 @@ func TestPreferencesScriptAtDocumentStart(t *testing.T) {
 
 	_, fw := testWindow(t, WindowOptions{Page: PageOptions{PreloadScript: "preload();"}})
 	scripts := fw.Opts.UserScripts
-	if len(scripts) != 3 {
-		t.Fatalf("UserScripts = %d, want the bridge, the preferences and the preload script", len(scripts))
+	if len(scripts) != 4 {
+		t.Fatalf("UserScripts = %d, want the bridge, the preferences, the preload script and the one hiding the channel", len(scripts))
 	}
 	if !strings.Contains(scripts[0].Source, `"secret"`) {
 		t.Error("the bridge configuration does not come first")
@@ -1869,7 +1873,7 @@ func TestPreferencesScriptAtDocumentStart(t *testing.T) {
 		}
 	}
 	if scripts[2].Source != "preload();" {
-		t.Errorf("preload script = %q, want it last", scripts[2].Source)
+		t.Errorf("preload script = %q, want it after the bridge's", scripts[2].Source)
 	}
 }
 
