@@ -15,6 +15,7 @@ import (
 
 	"github.com/ebitengine/purego"
 
+	"github.com/egoist/mygo/internal/bridge"
 	"github.com/egoist/mygo/internal/platform"
 )
 
@@ -301,6 +302,10 @@ func (w *window) createWebView() {
 	w.web = webkitWebViewNewWithUserContentManager(w.ucm)
 	webkitUserContentManagerRegisterHandler(w.ucm, cs("mygo"))
 	connect(w.ucm, "script-message-received::mygo", cbScriptMessage, data)
+	if inWorlds() {
+		webkitUserContentManagerRegisterHandlerInWorld(w.ucm, cs(bridge.DOMReadyHandler), cs(bridge.DOMReadyWorld))
+		connect(w.ucm, "script-message-received::"+bridge.DOMReadyHandler, cbDOMReady, data)
+	}
 	w.addUserScripts()
 
 	settings := webkitWebViewGetSettings(w.web)
@@ -371,7 +376,7 @@ func (w *window) cleanup() {
 		w.surface.destroy()
 	}
 	if w.ucm != 0 {
-		webkitUserContentManagerUnregisterHandler(w.ucm, cs("mygo"))
+		w.removeScriptHandlers()
 		webkitUserContentManagerRemoveAllScripts(w.ucm)
 		gObjectUnref(w.ucm)
 	}
@@ -1010,8 +1015,27 @@ func (w *window) CanGoForward() bool { return webkitWebViewCanGoForward(w.web) }
 func (w *window) URL() string        { return goStr(webkitWebViewGetURI(w.web)) }
 func (w *window) IsLoading() bool    { return webkitWebViewIsLoading(w.web) }
 
+// inWorlds reports whether WebKitGTK keeps scripts and message handlers in
+// worlds of their own (2.22 and newer), as the DOMContentLoaded script
+// needs: its world is one no script of the page reaches.
+func inWorlds() bool {
+	return webkitUserContentManagerRegisterHandlerInWorld != nil &&
+		webkitUserContentManagerUnregisterHandlerInWorld != nil &&
+		webkitUserScriptNewForWorld != nil
+}
+
+// removeScriptHandlers undoes what createWebView registered on the content
+// manager: the handler of the bridge and that of the DOMContentLoaded script.
+func (w *window) removeScriptHandlers() {
+	webkitUserContentManagerUnregisterHandler(w.ucm, cs("mygo"))
+	if inWorlds() {
+		webkitUserContentManagerUnregisterHandlerInWorld(w.ucm, cs(bridge.DOMReadyHandler), cs(bridge.DOMReadyWorld))
+	}
+}
+
 // addUserScripts adds the user scripts of the options to the content
-// manager, and the title bar's after them.
+// manager, and the title bar's after them, and the one that tells
+// DOMContentLoaded, from a world of its own.
 func (w *window) addUserScripts() {
 	add := func(src string, frames, when int32) {
 		script := webkitUserScriptNew(cs(src), frames, when, 0, 0)
@@ -1031,6 +1055,11 @@ func (w *window) addUserScripts() {
 	if w.controls != nil {
 		// After the bridge, which it tells; top frame, document start.
 		add(w.titleBarScript(), 1, 0)
+	}
+	if inWorlds() {
+		script := webkitUserScriptNewForWorld(cs(bridge.DOMReadyScript), 1, 0, cs(bridge.DOMReadyWorld), 0, 0)
+		webkitUserContentManagerAddScript(w.ucm, script)
+		webkitUserScriptUnref(script)
 	}
 }
 
@@ -1292,6 +1321,7 @@ var (
 	cbCreate, cbClose, cbCrashed, cbButtonPress, cbAsyncReady, cbPNGWrite       ptr
 	cbDragData, cbDragDrop, cbPrintFinished, cbPrintFailed, cbPermission        ptr
 	cbMotion, cbControlsAllocated, cbDecorationLayout, cbActivationResize       ptr
+	cbDOMReady                                                                  ptr
 )
 
 func field[T any](p ptr, offset uintptr) T {
@@ -1556,6 +1586,13 @@ func initWindowCallbacks() {
 			w.h.Message(takeStr(jscValueToString(webkitJavascriptResultGetJSValue(result))), goStr(webkitWebViewGetURI(w.web)))
 		}
 	})
+	cbDOMReady = purego.NewCallback(func(ucm, result, data ptr) {
+		// The script of a world no page script posts from: all it says is
+		// that the DOM of the page is ready.
+		if w := b().window(data); w != nil {
+			w.h.DOMContentLoaded()
+		}
+	})
 	cbLoadChanged = purego.NewCallback(func(web ptr, event int32, data ptr) {
 		w := b().window(data)
 		if w == nil {
@@ -1567,6 +1604,11 @@ func initWindowCallbacks() {
 		case 2: // WEBKIT_LOAD_COMMITTED
 			w.h.NavigationCommitted(w.URL())
 		case 3: // WEBKIT_LOAD_FINISHED
+			if !inWorlds() {
+				// WebKitGTK before 2.22 has no world for the script that
+				// tells: the DOM is ready by now.
+				w.h.DOMContentLoaded()
+			}
 			w.h.LoadFinished()
 		}
 	})

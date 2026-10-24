@@ -63,6 +63,29 @@ func Script(cfg Config) string {
 // `webkit`; that of WebView2 is `chrome.webview`.
 const HideScript = `if(window!==window.top){try{delete Object.getPrototypeOf(window.webkit).messageHandlers}catch(e){}try{delete window.chrome.webview}catch(e){}}`
 
+// DOMReadyWorld and DOMReadyHandler are the content world and the message
+// handler of DOMReadyScript on WebKit (macOS and Linux). WebKit gives each
+// world its own JavaScript objects and its own message handlers: a script
+// of the page, which runs in the page's world, finds neither the handler
+// nor anything the script keeps, and what it changes in its own objects (a
+// prototype, a property of `document`) is not what the script sees.
+const (
+	DOMReadyWorld   = "mygo-dom-ready"
+	DOMReadyHandler = "mygoDOMReady"
+)
+
+// DOMReadyScript tells Go that the DOM of the page is ready, which a page
+// that is not trusted has no bridge to tell. It is a user script of
+// DOMReadyWorld for the top frame, at document start, and posts to
+// DOMReadyHandler once: when the document's DOMContentLoaded event comes,
+// or at once for a document past parsing. The DOM, and so the event, are
+// shared with the page. The script listens on the window, in the capture
+// phase, where its listener is the first to hear the event, before any the
+// page adds, which could stop the event. The page can dispatch a
+// DOMContentLoaded of its own; what it makes is not trusted (`isTrusted` is
+// false), and only the engine's event counts.
+const DOMReadyScript = `(function(){var p=function(){webkit.messageHandlers.` + DOMReadyHandler + `.postMessage("")};if(document.readyState!=="loading"){p();return}var h=function(e){if(e.isTrusted){window.removeEventListener("DOMContentLoaded",h,true);p()}};window.addEventListener("DOMContentLoaded",h,true)})();`
+
 // TitleBarEvent tells a page of a window with a hidden title bar the room
 // the window controls take. The bridge keeps it in the --mygo-titlebar-*
 // CSS variables.

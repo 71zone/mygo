@@ -867,7 +867,7 @@ the other messages do nothing unless a trusted page posted them:
 | `{"t":"call","id":N,"k":token,"m":"Service.Method","a":[...]}` | call a bound method |
 | `{"t":"chan-ack","c":N,"k":token,"n":S}` | the page took the values of channel N up to the S-th |
 | `{"t":"chan-close","c":N,"k":token}` | the page closed channel N |
-| `{"t":"dom-ready"}` | DOMContentLoaded fired |
+| `{"t":"dom-ready"}` | DOMContentLoaded fired (a page without the bridge is told by the backend, see Trust) |
 | `{"t":"drag"}` / `{"t":"dblclick"}` | mousedown / double click on a drag region |
 
 Go → page, batched into one `__mygo.receive([...])` evaluation per
@@ -990,8 +990,8 @@ servers in development, and origins listed in `PageOptions.TrustedOrigins`
   with no channel cannot send any, so this guards against what the first
   decision misses: a document that was trusted a moment before, a frame, or a
   bug of an engine. A page that is not trusted gets no events either (they
-  wait for a dom-ready it never sends), and `OnDOMReady` runs when its load
-  finishes.
+  wait for a dom-ready it never sends); its `OnDOMReady` is the backend's
+  word, below.
 
 An iframe of another origin must not be able to talk to Go either. The
 frames do not see the channel; besides that, each window has a random secret
@@ -1005,6 +1005,46 @@ WebKitGTK exposes no frame information, so Linux relies on the secret.
 script it evaluates brings it, as the bridge with the `find` option, which
 installs `window.__mygo` with `find` and `stopFind` only, and `StopFindInPage`
 takes it away.
+
+`OnDOMReady` of a page without the bridge is the backend's word. The page
+cannot say it: it has no channel to Go, and what a page could post would be a
+forgery. `WindowHandler.DOMContentLoaded` is called for every document of
+the main frame, after `NavigationCommitted` and before `LoadFinished`, from a
+path the page can neither post to nor see. The core takes it for a page that
+is not trusted, once for each document (`Window.domLoaded`, reset at
+`NavigationCommitted`). For a trusted page the bridge's `dom-ready` is the
+one that counts, as it releases the events held for the page, and the
+backend's call is dropped; so `OnDOMReady` runs once for each document of
+either kind. It does not wait for the images and subframes of the page: it
+runs at `DOMContentLoaded`, not at `LoadFinished`. A page that WebKit
+restores from its page cache on a history navigation is the document it was,
+not parsed again: it gets no `OnDOMReady`, with the bridge or without it.
+
+- **macOS.** `bridge.DOMReadyScript` is a user script for the main frame, at
+  document start, in a `WKContentWorld` of its own (`bridge.DOMReadyWorld`),
+  with a message handler registered in that world
+  (`addScriptMessageHandler:contentWorld:name:`, the window's delegate, so
+  that no callback is made for it). WebKit gives each world its own
+  JavaScript objects and handlers: the page's world has neither the handler
+  nor what the script keeps, and what the page does to its prototypes does
+  not reach the script. The DOM is shared, though, so a page can dispatch a
+  `DOMContentLoaded` event of its own, or stop the real one: the script
+  listens on the window in the capture phase, where its listener is the
+  first, before any the page adds, and takes events whose `isTrusted` is
+  true, which the engine's are and the page's are not. The delegate tells
+  the message of that world by `WKScriptMessage.world`. The script adds one
+  message to every document of the window, which the core drops for a trusted
+  page.
+- **Linux.** The same script, in a world of its own through
+  `webkit_user_script_new_for_world` and
+  `webkit_user_content_manager_register_script_message_handler_in_world`
+  (WebKitGTK 2.22). The handler's name is its own, and so is the callback of
+  its signal, created once with the others. WebKitGTK before 2.22 has no
+  worlds: the backend then calls `DOMContentLoaded` when the load finished.
+- **Windows.** `ICoreWebView2_2::add_DOMContentLoaded`, the engine's event
+  for the top-level document, which a frame's `DOMContentLoaded` does not
+  raise, with no script. A runtime older than `ICoreWebView2_2` has none:
+  the backend then calls it when the navigation completed.
 
 ### Plugins
 

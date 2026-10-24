@@ -506,7 +506,7 @@ Page events, on `win.Page()`:
 |---|---|
 | `OnWillNavigate(func(e *mygo.NavigateEvent))` | the page is about to navigate, for example after a click on a link; `e.PreventDefault()` cancels it. Not called for `LoadURL` and its siblings. |
 | `OnDidNavigate(func(url string))` | a navigation committed |
-| `OnDOMReady` | the page's DOM is ready (`DOMContentLoaded`); for a page that may not call Go, which has no bridge to tell, when it finished loading |
+| `OnDOMReady` | the page's DOM is ready (`DOMContentLoaded`), once for each document, before its images and frames loaded: for the pages of other sites too, which have no bridge, as the web view tells |
 | `OnDidFinishLoad` | the page finished loading |
 | `OnDidFailLoad(func(err *mygo.LoadError))` | the page failed to load |
 | `OnPageTitleUpdated(func(e *mygo.TitleEvent))` | the page's `<title>` changed; preventing the event keeps the window title as it is |

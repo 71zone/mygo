@@ -375,15 +375,17 @@ message to Go: the channel the bridge talks to Go through,
 taken out of the page before its scripts run, from the pages that may call
 Go as well, and from every frame inside any page. Go ignores everything a
 page that may not call Go posts besides, such as the messages for window
-drags, Escape and dropped files, and so does `OnDOMReady` for such a page:
-it runs when the page has finished loading, as there is no bridge to say
-the DOM is ready. Events never reach it, and neither do the paths of dropped
-files. `PageOptions.PreloadScript` still runs in the page, without
-`window.mygo`; `FindInPage` brings the part of the bridge it needs for the
-time of the search. The page can still see that it runs in a web view,
-and which one: `window.webkit` stays an empty object in WebKit, which does not
-let a page remove it, and the user agent, the client hints and the
-differences of the engines are the web view's own.
+drags, Escape and dropped files. `OnDOMReady` still runs for such a page,
+once for each document, when its DOM is ready: the web view tells Go, not
+the page, in a way the page cannot see or post to, so a page can neither
+make it run before its DOM is ready or twice, nor keep it from running.
+Events never reach the page, and neither do the paths of dropped files.
+`PageOptions.PreloadScript` still runs in the page, without `window.mygo`;
+`FindInPage` brings the part of the bridge it needs for the time of the
+search. The page can still see that it runs in a web view, and which one:
+`window.webkit` stays an empty object in WebKit, which does not let a page
+remove it, and the user agent, the client hints and the differences of the
+engines are the web view's own.
 
 ## From Go to the page
 

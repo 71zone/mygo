@@ -653,6 +653,14 @@ type WindowHandler interface {
 	WillNavigate(nav Navigation) bool
 	NavigationStarted(url string)
 	NavigationCommitted(url string)
+	// DOMContentLoaded is called once for every document of the main frame,
+	// when its DOM is ready (DOMContentLoaded), after NavigationCommitted
+	// and before LoadFinished. The backend learns it from the engine or from
+	// a script the page cannot see or post to (a user script in a world of
+	// its own): the bridge of a trusted page tells it too, but a page that
+	// is not trusted has none. A backend whose engine cannot say it calls
+	// DOMContentLoaded when the load finished.
+	DOMContentLoaded()
 	LoadFinished()
 	LoadFailed(url string, code int, description string)
 	TitleChanged(title string)
