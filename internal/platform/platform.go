@@ -399,7 +399,7 @@ type WindowOptions struct {
 	// platforms reach them already.
 	TabFocusesLinks bool
 	// Native carries backend specific state, e.g. the WKWebViewConfiguration
-	// WebKit hands us for window.open().
+	// WebKit hands us for window.open(), or WebView2's NewWindowRequested args.
 	Native uintptr
 
 	// Surface creates the window with a Surface, which content MyGo draws
@@ -713,7 +713,7 @@ type NewWindowRequest struct {
 	// Width/Height/X/Y come from window.open() features; zero when absent.
 	X, Y, Width, Height int
 	// Native must be copied into WindowOptions.Native of the window that is
-	// returned.
+	// returned, and is only valid until NewWindow returns.
 	Native uintptr
 }
 

@@ -386,6 +386,12 @@ win.Page().SetWindowOpenHandler(func(req mygo.WindowOpenRequest) *mygo.WindowOpt
 })
 ```
 
+A window the handler allows keeps its relation to the page that opened it on
+macOS and Windows: `window.opener`, `window.name`, `postMessage` and
+`window.close()` work, as a sign-in page that answers its opener needs. A
+link or call with `noopener` has none. On Windows, pages that a custom scheme
+serves open in independent windows, and so do all on Linux.
+
 `win.Page().OnWillNavigate` can cancel the page's own navigations, e.g. to keep the
 app's window on the app: see [Windows](windows.md#pages).
 

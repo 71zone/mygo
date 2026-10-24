@@ -136,6 +136,8 @@ const (
 	accelGetVirtualKey             = 4
 	accelPutHandled                = 8
 	profilePutPreferredColorScheme = 9 // ICoreWebView2Profile
+	newWinPutNewWindow             = 4
+	newWinGetDeferral              = 9
 )
 
 var (
