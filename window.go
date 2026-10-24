@@ -1381,9 +1381,9 @@ func (e *EvalError) Error() string { return "mygo: javascript error: " + e.Messa
 // open, or nil to deny the request. Without a handler, http(s) URLs open in
 // the default browser and everything else is denied.
 //
-// On macOS the new page keeps its relation to the opener (window.opener).
-// On Linux it opens as an independent page, because WebKitGTK would share
-// the opener's script message routing with a related page.
+// On macOS the new page keeps its relation to the opener (window.opener),
+// and on Windows too, unless a custom scheme serves it. On Linux it opens
+// as an independent page: WebKitGTK would share the opener's routing.
 func (p *Page) SetWindowOpenHandler(fn func(req WindowOpenRequest) *WindowOptions) {
 	p.w.mu.Lock()
 	p.w.openHandler = fn

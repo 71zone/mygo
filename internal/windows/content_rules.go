@@ -84,9 +84,10 @@ func setContentRules(w *window, lists []any) {
 }
 
 // filterAllRequests makes WebView2 ask about every request, once the
-// window applies content rules.
+// window applies content rules. A window opened by a page does it when its
+// event completes (answerPopup).
 func (w *window) filterAllRequests() {
-	if w.contentFilter != nil && !w.filtersAll {
+	if w.contentFilter != nil && !w.filtersAll && w.popup == nil {
 		w.filtersAll = true
 		w.addFilter("*")
 	}

@@ -32,6 +32,11 @@ type window struct {
 	pending      []pendingCall
 	webViewErr   error
 	webViewFails int // creations that failed
+	// popup is the NewWindowRequested event of the page that opened the
+	// window, which its web view answers (openPopup); scriptsStale tells
+	// that SetUserScripts ran meanwhile.
+	popup        *popupRequest
+	scriptsStale bool
 	// scriptIDs are the ids of the scripts added to every document, which
 	// SetUserScripts removes; scriptGen counts the replacements, so an id
 	// that arrives after one is removed at once.
@@ -227,6 +232,7 @@ func (b *Backend) NewWindow(o *platform.WindowOptions, h platform.WindowHandler)
 		w.caption.layout()
 	}
 	if !o.Surface {
+		w.takePopup()
 		b.whenEnvironment(w.createWebView)
 	}
 	return w, nil
