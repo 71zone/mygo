@@ -11,31 +11,32 @@ declare const __MYGO_CONFIG__: BridgeConfig;
 const INTERACTIVE =
   'input,textarea,select,button,a[href],summary,label,[contenteditable]:not([contenteditable="false"]),video[controls],audio[controls]';
 
+// What the __mygo of a page that is not trusted does with what Go delivers.
+const ignore = () => {};
+
 (() => {
   const w = window as any;
   if (w.__mygo) return;
-
-  // Page.FindInPage in a page without the bridge, one that is not trusted:
-  // only what finding takes, which StopFindInPage takes away again.
-  if (__MYGO_CONFIG__.find) {
-    const stop = () => {
-      stopFind();
-      delete w.__mygo;
-    };
-    Object.defineProperty(w, "__mygo", { value: Object.freeze({ find, stopFind: stop }), configurable: true });
-    return;
-  }
 
   // The native channel is taken, and hidden from the page, wherever the page
   // is from; only the pages Go trusts get the bridge. An untrusted one finds
   // none of it: neither window.mygo, nor the channel to talk to Go with.
   const raw = transport(w);
-  if (!raw || !isTrusted(location, __MYGO_CONFIG__.trust)) return;
+  if (!raw || !isTrusted(location, __MYGO_CONFIG__.trust)) {
+    // Go's scripts reach every page through window.__mygo: replies and
+    // events (deliver), the find bar (find). Pinned here, before a script of
+    // the page runs, it is not the page's to define, so what Go says for
+    // another page is lost in this one, and the page gets no say in what
+    // FindInPage reports. (Go does not send a page that is not trusted
+    // anything; this is for the document it could not tell about yet.)
+    Object.defineProperty(w, "__mygo", { value: Object.freeze({ receive: ignore, deliver: ignore, find, stopFind }) });
+    return;
+  }
   // Only this closure knows the secret and the channel, so scripts of the
   // page cannot post messages of their own.
   const post = (m: string) => raw.post(__MYGO_CONFIG__.secret + m);
 
-  const { runtime, internal } = createRuntime(__MYGO_CONFIG__, post);
+  const { runtime, internal, token } = createRuntime(__MYGO_CONFIG__, post);
   Object.defineProperty(w, "mygo", { value: runtime, enumerable: true });
   Object.defineProperty(w, "__mygo", { value: Object.freeze({ ...internal, find, stopFind }) });
 
@@ -59,9 +60,11 @@ const INTERACTIVE =
     }),
   );
 
+  // dom-ready names the document, so that what Go held for the page is sent
+  // for this one (Batch), and for no other the window shows by then.
   const notify = (t: "dom-ready" | "drag" | "dblclick" | "escape") => {
     try {
-      post(JSON.stringify({ t }));
+      post(JSON.stringify(t === "dom-ready" ? { t, k: token } : { t }));
     } catch {
       // The page is being torn down.
     }

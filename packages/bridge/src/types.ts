@@ -24,8 +24,6 @@ export interface BridgeConfig {
   dir: Direction;
   /** Which pages may use the bridge; the others get none of it. */
   trust: Trust;
-  /** Installs only what Page.FindInPage needs, in a page that has no bridge. */
-  find?: boolean;
 }
 
 /** Messages posted from the page to Go. */
@@ -34,7 +32,8 @@ export type Outgoing =
   /** Channel c took the values up to the n-th. */
   | { t: "chan-ack"; c: number; k: string; n: number }
   | { t: "chan-close"; c: number; k: string }
-  | { t: "dom-ready" }
+  /** The document is ready; k is its token (see Batch). */
+  | { t: "dom-ready"; k: string }
   | { t: "drag" }
   | { t: "dblclick" };
 

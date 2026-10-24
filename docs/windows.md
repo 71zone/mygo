@@ -613,8 +613,8 @@ fmt.Printf("%d of %d\n", res.Active, res.Matches)
 win.Page().StopFindInPage()
 ```
 
-A page that may not call Go has no bridge to find with: `FindInPage` brings
-the part it needs, and `StopFindInPage` takes it away again.
+A page that may not call Go has no `window.mygo`, but the part of the bridge
+that finds is in every page, and the page cannot answer for it.
 
 ### Input events
 

@@ -36,12 +36,17 @@ func (w *Window) bridgeScript() string {
 
 // bridgeTrust is the rule of isTrusted as data, for the bridge in the page,
 // which gives its page none of itself unless the page is trusted. Keep the
-// two in step (TestBridgeTrust).
+// two in step (TestBridgeTrust). It cannot tell which about: document the
+// app made, as the core does at NavigationCommitted: the bridge in an
+// about: page of a window the app made lets Go judge.
 func (w *Window) bridgeTrust() bridge.Trust {
 	t := bridge.Trust{
-		Schemes:  []string{"about", "file"},
+		Schemes:  []string{"file"},
 		Origins:  []string{},
 		Loopback: IsDev(),
+	}
+	if !w.popup {
+		t.Schemes = append(t.Schemes, "about")
 	}
 	// The frontend's scheme is among them.
 	for _, s := range Protocol.schemes() {
@@ -280,6 +285,7 @@ func (w *Window) handleMessage(msg, pageURL string) {
 	case "dom-ready":
 		w.outMu.Lock()
 		w.domReady = true
+		w.docToken = m.K // the document the events held are for
 		w.outbox = append(w.outbox, w.held...)
 		w.held = nil
 		w.outMu.Unlock()
@@ -315,29 +321,24 @@ func (w *Window) handleMessage(msg, pageURL string) {
 
 // trustsSender reports whether a message from the document at pageURL is a
 // trusted page's: the page showing is trusted, as the last navigation
-// decided, and so is the document. The decision for the last URL is kept, as
-// pages post many messages. Main thread only.
+// decided, and so is the document. The decision for the last URL is kept,
+// as pages post many messages, for as long as the protocols are the same.
+// A message without a URL is nobody's. Main thread only.
 func (w *Window) trustsSender(pageURL string) bool {
-	if !w.trusted {
+	if !w.trusted || pageURL == "" {
 		return false
 	}
-	if pageURL != w.senderURL {
-		w.senderURL, w.senderTrusted = pageURL, w.isTrusted(pageURL)
+	if gen := Protocol.generation(); pageURL != w.senderURL || gen != w.senderGen {
+		w.senderURL, w.senderTrusted, w.senderGen = pageURL, w.isTrusted(pageURL), gen
 	}
 	return w.senderTrusted
 }
 
-// findScript returns the script with which FindInPage asks the bridge. A
-// page that is not trusted has none, so the script brings the part that
-// finds; StopFindInPage takes it away. Pages are told apart on the main
-// thread, as trust is.
+// findScript returns the script with which FindInPage asks the bridge, which
+// every page has, trusted or not, as window.__mygo.find: the bridge pins it
+// at document start, so a page cannot answer for it.
 func (w *Window) findScript(text string, opts FindOptions) string {
 	t, _ := jsonv1.Marshal(text)
 	o, _ := jsonv1.Marshal(map[string]bool{"matchCase": opts.MatchCase, "backward": opts.Backward, "next": opts.FindNext})
-	find := fmt.Sprintf("window.__mygo.find(%s, %s)", t, o)
-	if onMainValue(func() bool { return w.trusted }) {
-		return find
-	}
-	install := strings.TrimSuffix(bridge.Script(bridge.Config{Find: true}), ";")
-	return "(window.__mygo || " + install + ", " + find + ")"
+	return fmt.Sprintf("window.__mygo.find(%s, %s)", t, o)
 }
