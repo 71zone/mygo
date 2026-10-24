@@ -256,7 +256,11 @@ func (w *window) setUp(controller uintptr) {
 		if paths := postedFiles(args); len(paths) > 0 {
 			w.dropped = paths
 		}
-		w.h.Message(takeWstr(p))
+		var src uintptr
+		if failed(comCall(args, msgGetSource, uintptr(unsafe.Pointer(&src)))) {
+			src = 0
+		}
+		w.h.Message(takeWstr(p), w.appURL(takeWstr(src)))
 	})
 	add(wvAddNewWindowRequested, w.newWindowRequested)
 	add(wvAddPermissionRequested, w.permissionRequested)

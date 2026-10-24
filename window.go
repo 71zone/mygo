@@ -283,6 +283,10 @@ type Window struct {
 	// Main thread only.
 	trusted        bool
 	trustedOrigins []string
+	// senderURL is the URL of the last document trustsSender judged, and
+	// senderTrusted its trust. Main thread only.
+	senderURL     string
+	senderTrusted bool
 	// html is the document LoadHTML loaded, while it is the page's or
 	// about to be. Main thread only.
 	html *htmlDocument
@@ -1697,7 +1701,7 @@ func (h *windowHandler) TitleBarChanged() {
 	}
 }
 
-func (h *windowHandler) Message(msg string) { h.w.handleMessage(msg) }
+func (h *windowHandler) Message(msg, url string) { h.w.handleMessage(msg, url) }
 
 func (h *windowHandler) WillNavigate(nav platform.Navigation) bool {
 	if doc := h.w.html; nav.IsMainFrame && nav.Reload && doc != nil && doc.shown {
@@ -1737,6 +1741,10 @@ func (h *windowHandler) NavigationCommitted(url string) {
 }
 
 func (h *windowHandler) LoadFinished() {
+	if !h.w.trusted {
+		// The page has no bridge to tell it: its DOM is ready by now.
+		fire(&h.w.onDOMReady)
+	}
 	fire(&h.w.onDidFinishLoad)
 	// Pages without the bridge (e.g. images) never report DOM ready.
 	h.w.readyToShow()

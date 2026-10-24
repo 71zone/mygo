@@ -1544,7 +1544,9 @@ func initWindowCallbacks() {
 	})
 	cbScriptMessage = purego.NewCallback(func(ucm, result, data ptr) {
 		if w := b().window(data); w != nil {
-			w.h.Message(takeStr(jscValueToString(webkitJavascriptResultGetJSValue(result))))
+			// WebKitGTK reports no frame for a script message; the view's
+			// current URI is the best available sender.
+			w.h.Message(takeStr(jscValueToString(webkitJavascriptResultGetJSValue(result))), goStr(webkitWebViewGetURI(w.web)))
 		}
 	})
 	cbLoadChanged = purego.NewCallback(func(web ptr, event int32, data ptr) {

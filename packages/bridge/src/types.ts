@@ -1,5 +1,6 @@
 // The public types are those of the mygo-runtime package.
 import type { Direction, Platform } from "../../runtime/src/types";
+import type { Trust } from "./trust";
 
 export type {
   Channel,
@@ -21,6 +22,10 @@ export interface BridgeConfig {
   /** The language the app shows, e.g. "zh-Hans", and its direction. */
   locale: string;
   dir: Direction;
+  /** Which pages may use the bridge; the others get none of it. */
+  trust: Trust;
+  /** Installs only what Page.FindInPage needs, in a page that has no bridge. */
+  find?: boolean;
 }
 
 /** Messages posted from the page to Go. */
