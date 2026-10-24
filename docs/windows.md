@@ -586,6 +586,10 @@ store's, and an invalid one fail with an error matching
 `mygo.ErrInvalidStorageID`; where the system cannot keep stores apart,
 the call fails with one matching `errors.ErrUnsupported`.
 
+After the app has quit, and when it quits while the call waits, the call
+returns an error saying the event loop has stopped, as `ClearBrowsingData`
+does, instead of waiting for ever.
+
 | | `ClearStorage` |
 |---|---|
 | macOS | `removeDataOfTypes:modifiedSince:completionHandler:` of the store, all types, from the beginning of time. The store is cleared rather than removed (`removeDataStoreForIdentifier:`), which fails with "Data store is in use" while a web view holds it, and does here even after the web views are destroyed. A store `fetchAllDataStoreIdentifiers:` does not list has no data, and is left unmade |

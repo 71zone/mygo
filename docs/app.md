@@ -349,6 +349,10 @@ makes no store. The empty ID fails with an error matching
 `ClearBrowsingData`'s), and a system that cannot keep stores apart, as
 Linux and macOS before 14, with one matching `errors.ErrUnsupported`.
 
+After the app has quit, and when it quits while a call waits for the
+store to be cleared, `ClearBrowsingData` and `ClearStorage` return an
+error saying the event loop has stopped, instead of waiting for ever.
+
 ### Cookies
 
 `mygo.Cookies` reads and changes the cookies of the app's pages, `HttpOnly`
