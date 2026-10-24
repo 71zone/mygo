@@ -565,15 +565,32 @@ if errors.Is(err, errors.ErrUnsupported) {
 | | `StorageID` |
 |---|---|
 | macOS | `WKWebsiteDataStore` of an identifier (macOS 14 or newer): MyGo makes the identifier, a UUID, of the ID, and WebKit keeps the data in `~/Library/WebKit/<bundle id>/WebsiteDataStore/`. Before macOS 14, the call fails with `errors.ErrUnsupported` |
-| Windows | a WebView2 profile in the app's one environment (`ICoreWebView2Environment10`, WebView2 Runtime 1.0.1210.39 or newer), a directory in `EBWebView` of the user data folder (`%LocalAppData%\<Name>\WebView2`) named `mygo-` and the first 40 hex digits of the ID's SHA-256, as profile names ignore case and may not end with a period. With an older runtime the page gets no web view: the error, matching `errors.ErrUnsupported`, is logged and what the page's methods return, as WebView2 makes web views after `NewWebView` and `NewWindow` return |
+| Windows | a WebView2 profile in the app's one environment (`ICoreWebView2Environment10`, WebView2 Runtime 1.0.1210.39 or newer), named `mygo-` and the first 40 hex digits of the ID's SHA-256, as profile names ignore case and may not end with a period; WebView2 keeps it in the directory `WV2Profile_<name>` in `EBWebView` of the user data folder (`%LocalAppData%\<Name>\WebView2`). With an older runtime the page gets no web view: the error, matching `errors.ErrUnsupported`, is logged and what the page's methods return, as WebView2 makes web views after `NewWebView` and `NewWindow` return |
 | Linux | not supported: WebKitGTK's web views share one data manager; the call fails with `errors.ErrUnsupported` |
 
 `App.ClearBrowsingData` and `mygo.Cookies` act on the default store only
 (see [browsing data](app.md#browsing-data)), and leave the data of a page
-with a `StorageID` alone. MyGo has no call yet to clear or delete the
-store of a `StorageID`: the site's own sign out clears what the site
-keeps there, and `Page.Eval` what its scripts can reach (not `HttpOnly`
-cookies).
+with a `StorageID` alone. `App.ClearStorage(id)` clears the store of one
+`StorageID`, cookies (`HttpOnly` ones too), local and session storage,
+IndexedDB, service workers and caches, and no other store, for example
+when the user signs that account out or deletes it:
+
+```go
+err := mygo.App.ClearStorage("work")
+```
+
+Pages of the ID that are open keep what they hold in memory until they
+reload. It works with no page of the ID open too, and when no store of
+the ID exists yet (it makes none). The empty ID, which is the default
+store's, and an invalid one fail with an error matching
+`mygo.ErrInvalidStorageID`; where the system cannot keep stores apart,
+the call fails with one matching `errors.ErrUnsupported`.
+
+| | `ClearStorage` |
+|---|---|
+| macOS | `removeDataOfTypes:modifiedSince:completionHandler:` of the store, all types, from the beginning of time. The store is cleared rather than removed (`removeDataStoreForIdentifier:`), which fails with "Data store is in use" while a web view holds it, and does here even after the web views are destroyed. A store `fetchAllDataStoreIdentifiers:` does not list has no data, and is left unmade |
+| Windows | `ClearBrowsingDataAll` of the profile (`ICoreWebView2_13`'s `Profile`, `ICoreWebView2Profile2`), through a web view of the ID that is open (a window's, or a web view in native UI), or with none a hidden web view made in that profile for the call and closed after it. A profile with no directory `WV2Profile_<name>` in `EBWebView` has no data, and is left unmade. An older WebView2 Runtime fails the call with `errors.ErrUnsupported` |
+| Linux | not supported: the call fails with `errors.ErrUnsupported` |
 
 ### Find in page
 
