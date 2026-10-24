@@ -546,7 +546,9 @@ type Page interface {
 	// input of the user's devices and input methods: the page's events
 	// are trusted (isTrusted is true), not the ones scripts make. done
 	// runs on the main thread once the page took the input, or with the
-	// reason it could not.
+	// reason it could not; a backend whose page answers a mouse move only
+	// when it draws a frame (WebView2 while the page is not visible) runs
+	// it as soon as the move is sent.
 	SendMouse(e PageMouseEvent, done func(err error))
 	SendKey(e PageKeyEvent, done func(err error))
 	InsertText(text string, done func(err error))

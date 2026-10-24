@@ -536,7 +536,7 @@ win.Page().StopFindInPage()
 `SendMouse`, `SendKey` and `InsertText` give a page input as the system
 does: the page's events are trusted (`isTrusted` is true), which scripts
 cannot make, so pages that ignore `dispatchEvent` take them. They need no key
-window, no active app and, except on Linux, no shown window:
+window and no active app, and, except on Linux, no shown window (see below):
 
 ```go
 p := win.Page()
@@ -561,6 +561,19 @@ and no wheel, drag or touch; no input method composes, and a shortcut with
 the web view must be shown: for a hidden window `SendMouse` and `SendKey`
 return an error, as WebKitGTK drops their presses. Browsers return an error
 matching `errors.ErrUnsupported`.
+
+A page that is not shown takes input on macOS and Windows: a hidden window,
+a [web view](ui/web-view.md) its window's view does not build or a box
+covers, and on Windows a minimized window too. Two things differ:
+
+- A web view that was never shown has no size on macOS and hears no mouse
+  event (keys and text go in); on Windows its viewport is WebView2's
+  default, not the element's (see [a web view that was not
+  shown](ui/web-view.md#a-web-view-that-was-not-shown)).
+- A page that is not shown draws no frames, and WebView2 answers a mouse
+  move only when the page draws one, or after five seconds. `SendMouse`
+  with a `MouseMove` therefore returns on Windows when it sent the move, not
+  when the page took it; the page gets it before the next event.
 
 ### Printing, PDF and screenshots
 

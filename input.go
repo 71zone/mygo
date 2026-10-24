@@ -88,10 +88,10 @@ var (
 //		err := page.SendMouse(mygo.MouseEvent{Type: t, X: 220, Y: 172})
 //	}
 //
-// Input needs no key window, no active app and no visible window or web
-// view: the page gets the event where the point is. X and Y stay CSS pixels
-// at any page zoom. SendMouse returns when the page took the event, not when
-// the page handled it. The platforms differ in what they hold back:
+// Input needs no key window and no active app: the page gets the event
+// where the point is. X and Y stay CSS pixels at any page zoom. SendMouse
+// returns when the page took the event, not when the page handled it. The
+// platforms differ in what they hold back:
 //
 //   - WebKit queues mouse events while one is in flight and takes keys at
 //     once, so wait for what a click did (the focus it gave) before
@@ -99,6 +99,17 @@ var (
 //   - On macOS a MouseDown gives the keyboard to the web view, as a click
 //     does, and WebKit drops a MouseMove at a point that the window's
 //     content paints over the web view.
+//   - On macOS a page that is not shown takes input: a window that is
+//     hidden, a web view the window's view does not build, one a box
+//     covers. A web view that was never shown has no size, and hears no
+//     mouse event, though it takes keys and text.
+//   - On Windows a page that is not shown takes input too: a window that
+//     is hidden or minimized, a web view that the window's view does not
+//     build or never built, one a box covers. Such a page draws no
+//     frames, and Chromium answers a mouse move only when it draws one, or
+//     after five seconds, so SendMouse returns for a MouseMove when it
+//     sent it, not when the page took it: the page gets it before the next
+//     event.
 //   - On Linux the web view must be shown, not in a hidden window: WebKitGTK
 //     drops the presses of one that is not, so SendMouse returns an error.
 //
@@ -130,11 +141,11 @@ func (p *Page) SendMouse(e MouseEvent) error {
 //
 // Like SendMouse it returns when the page took the event, not when the page
 // handled it, needs no key window and, except on Linux, no shown window (see
-// SendMouse), and gives an error for a key it does not know. The keys are
-// those of a US keyboard, with no input method composing, and a shortcut
-// with ModSuper is not reliable: macOS answers it as a key equivalent, not
-// as a key event. In browsers it returns an error matching
-// errors.ErrUnsupported.
+// SendMouse for the pages that are not shown), and gives an error for a key
+// it does not know. The keys are those of a US keyboard, with no input
+// method composing, and a shortcut with ModSuper is not reliable: macOS
+// answers it as a key equivalent, not as a key event. In browsers it returns
+// an error matching errors.ErrUnsupported.
 func (p *Page) SendKey(e KeyEvent) error {
 	if p.w.content != nil {
 		return errNoPage

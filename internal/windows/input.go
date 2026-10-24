@@ -12,6 +12,13 @@ import (
 // Input for a page goes through the DevTools protocol's Input domain, which
 // feeds Chromium's input pipeline as the system does: the page's events are
 // trusted, and it needs neither the window's focus nor a visible window.
+//
+// A page that is not visible (a web view the content does not show, a
+// minimized window) answers a mouse move only when it draws a frame, which
+// it does not: Chromium holds the move back until another event of the page
+// flushes it, or five seconds go by. Every other event is answered at once.
+// So SendMouse does not wait for the answer to a move, and returns when the
+// call is made: the move still reaches the page before the next event.
 
 // cdpModifiers returns the DevTools protocol's modifier bits: Alt 1,
 // Control 2, Meta 4, Shift 8.
@@ -40,6 +47,16 @@ func (w *window) input(method string, params map[string]any, done func(error)) {
 	}, done)
 }
 
+// inputQueued calls a method of the Input domain and reports to done as
+// soon as the call is made, without waiting for the page's answer.
+func (w *window) inputQueued(method string, params map[string]any, done func(error)) {
+	body, _ := json.Marshal(params)
+	w.withWebViewOr(func() {
+		w.devtools(method, string(body), nil)
+		done(nil)
+	}, done)
+}
+
 func (w *window) SendMouse(e platform.PageMouseEvent, done func(error)) {
 	// The protocol takes the point in CSS pixels of the viewport, whatever
 	// the web view's ZoomFactor is.
@@ -47,6 +64,8 @@ func (w *window) SendMouse(e platform.PageMouseEvent, done func(error)) {
 	switch e.Kind {
 	case platform.PageMouseMove:
 		params["type"], params["button"], params["buttons"] = "mouseMoved", "none", 0
+		w.inputQueued("Input.dispatchMouseEvent", params, done)
+		return
 	case platform.PageMouseDown:
 		params["type"], params["button"], params["buttons"], params["clickCount"] = "mousePressed", "left", 1, e.ClickCount
 	case platform.PageMouseUp:
