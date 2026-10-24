@@ -88,11 +88,12 @@ func pageSees(t *testing.T, w *mygo.Window) map[string]map[string]any {
 }
 
 // TestUntrustedPageSeesNoBridge: a page that is not the app's own, and not
-// listed in TrustedOrigins, finds no sign of MyGo: no window.mygo, no
-// window.__mygo, and no channel to Go, in its top frame and in its frames,
-// those of other origins and those without a document of their own. Its
-// preload script still runs. Go still hears that its DOM is ready, and
-// nothing the page does reaches Go.
+// listed in TrustedOrigins, finds no sign of MyGo but the object Go talks to
+// pages through, which the bridge pinned before the page's scripts and which
+// ignores what Go sends: no window.mygo and no channel to Go, in its top
+// frame and in its frames, those of other origins and those without a
+// document of their own. Its preload script still runs. Go still hears that
+// its DOM is ready, and nothing the page does reaches Go.
 func TestUntrustedPageSeesNoBridge(t *testing.T) {
 	// A loopback server is the app's own in development.
 	t.Setenv("MYGO_ENV", "production")
@@ -110,6 +111,13 @@ func TestUntrustedPageSeesNoBridge(t *testing.T) {
 	for _, frame := range []string{"top", "other", "blank", "srcdoc"} {
 		got := seen[frame]
 		for _, name := range []string{"mygo", "__mygo", "handler", "webview"} {
+			// The top frame has the bridge's own window.__mygo, which ignores what Go sends.
+			if frame == "top" && name == "__mygo" {
+				if got[name] != "object" {
+					t.Errorf("top frame: typeof __mygo = %v, want object", got[name])
+				}
+				continue
+			}
 			if got[name] != "undefined" {
 				t.Errorf("%s frame: typeof %s = %v, want undefined", frame, name, got[name])
 			}
@@ -134,16 +142,14 @@ func TestUntrustedPageSeesNoBridge(t *testing.T) {
 	if err != nil || res.Matches < 1 {
 		t.Errorf("FindInPage = %+v, %v", res, err)
 	}
+	// The bridge's window.__mygo, which the page cannot define, is what
+	// FindInPage asks, and all the page has of it.
 	if got, _ := mygo.EvalAs[string](w.Page(), "typeof window.__mygo"); got != "object" {
-		t.Errorf("finding left typeof window.__mygo = %q, want the part it needs", got)
+		t.Errorf("typeof window.__mygo = %q, want the bridge's object", got)
 	}
 	w.Page().StopFindInPage()
-	eventually(t, "StopFindInPage taking away what finding brought", func() bool {
-		got, _ := mygo.EvalAs[string](w.Page(), "typeof window.__mygo")
-		return got == "undefined"
-	})
-	if got, _ := mygo.EvalAs[string](w.Page(), "typeof window.mygo"); got != "undefined" {
-		t.Errorf("typeof window.mygo = %q after finding", got)
+	if got, _ := mygo.EvalAs[string](w.Page(), "typeof window.__mygo + typeof window.mygo"); got != "objectundefined" {
+		t.Errorf("typeof window.__mygo and window.mygo after finding = %q", got)
 	}
 }
 
@@ -214,7 +220,7 @@ func TestNavigatingBetweenTrustedAndUntrusted(t *testing.T) {
 	}
 	seen := pageSees(t, w)
 	for name, got := range seen["top"] {
-		if name != "preload" && name != "accepts" && got != "undefined" {
+		if name != "preload" && name != "accepts" && name != "__mygo" && got != "undefined" {
 			t.Errorf("after navigating to another origin: typeof %s = %v", name, got)
 		}
 	}
@@ -256,7 +262,7 @@ func TestWindowOpenUntrusted(t *testing.T) {
 	defer child.Destroy()
 	seen := pageSees(t, child)
 	for name, got := range seen["top"] {
-		if name != "preload" && name != "accepts" && got != "undefined" {
+		if name != "preload" && name != "accepts" && name != "__mygo" && got != "undefined" {
 			t.Errorf("popup of another origin: typeof %s = %v", name, got)
 		}
 	}
