@@ -498,11 +498,14 @@ func (a *Application) OnWindowCreated(fn func(w *Window)) (off func()) {
 // user signs out. Open pages keep what they hold in memory until they are
 // reloaded. It acts on the default store, that of the pages without a
 // StorageID (PageOptions.StorageID); ClearStorage clears the store of one.
+//
+// After the app has quit, and when it quits before the store is cleared,
+// the call fails at once with an error saying the event loop has stopped.
 func (a *Application) ClearBrowsingData() error {
 	needsApp("App.ClearBrowsingData")
-	ch := make(chan error, 1)
-	onMain(func() { backend().App().ClearBrowsingData(func(err error) { deliver(ch, err) }) })
-	return await(ch)
+	return nativeCall(func(done func(nativeResult)) {
+		backend().App().ClearBrowsingData(func(err error) { done(nativeResult{err: err}) })
+	}).err
 }
 
 // ClearStorage deletes what the pages with a StorageID stored
@@ -517,6 +520,9 @@ func (a *Application) ClearBrowsingData() error {
 // valid fails with an error matching ErrInvalidStorageID, and where pages
 // cannot have a StorageID the call fails with an error matching
 // errors.ErrUnsupported.
+//
+// After the app has quit, and when it quits before the store is cleared,
+// the call fails at once with an error saying the event loop has stopped.
 func (a *Application) ClearStorage(storageID string) error {
 	needsApp("App.ClearStorage")
 	if storageID == "" {
@@ -525,9 +531,9 @@ func (a *Application) ClearStorage(storageID string) error {
 	if err := checkStorageID(storageID); err != nil {
 		return err
 	}
-	ch := make(chan error, 1)
-	onMain(func() { backend().App().ClearStorage(storageID, func(err error) { deliver(ch, err) }) })
-	return await(ch)
+	return nativeCall(func(done func(nativeResult)) {
+		backend().App().ClearStorage(storageID, func(err error) { done(nativeResult{err: err}) })
+	}).err
 }
 
 // Dock controls the application's Dock icon (macOS). Its methods do
