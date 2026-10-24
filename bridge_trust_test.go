@@ -270,7 +270,7 @@ func TestDOMReadyWithoutBridge(t *testing.T) {
 
 	// A trusted page: its bridge tells, and the backend's word is not what
 	// counts for it.
-	navigate("about:blank")
+	navigate("mygo://localhost/")
 	onMain(fw.H.DOMContentLoaded)
 	onMain(fw.H.LoadFinished)
 	check("a trusted page, before its bridge told", 3, 4)
@@ -279,18 +279,17 @@ func TestDOMReadyWithoutBridge(t *testing.T) {
 	check("a trusted page", 4, 4)
 }
 
-// TestFindScript: FindInPage brings what it needs to a page that has no
-// bridge, and only to such a page.
+// TestFindScript: FindInPage asks the bridge through window.__mygo, which
+// every page has (the bridge pins it at document start), trusted or not:
+// the script brings nothing, and uses no object a page could define.
 func TestFindScript(t *testing.T) {
 	w, fw := testWindow(t, WindowOptions{})
-	trusted := w.findScript("x", FindOptions{})
-	if strings.Contains(trusted, "function") {
-		t.Errorf("trusted page: %s", trusted)
+	const want = `window.__mygo.find("x", {"backward":false,"matchCase":false,"next":false})`
+	if got := w.findScript("x", FindOptions{}); got != want {
+		t.Errorf("trusted page: %s", got)
 	}
 	onMain(func() { fw.H.NavigationCommitted("https://evil.example/") })
-	untrusted := w.findScript("x", FindOptions{})
-	if !strings.HasPrefix(untrusted, "(window.__mygo || (function(__MYGO_CONFIG__){") || !strings.Contains(untrusted, `"find":true`) ||
-		!strings.HasSuffix(untrusted, `, window.__mygo.find("x", {"backward":false,"matchCase":false,"next":false}))`) {
-		t.Errorf("untrusted page: %.200s", untrusted)
+	if got := w.findScript("x", FindOptions{}); got != want {
+		t.Errorf("untrusted page: %s", got)
 	}
 }

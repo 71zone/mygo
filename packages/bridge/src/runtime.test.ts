@@ -91,6 +91,31 @@ describe("events", () => {
   });
 });
 
+describe("deliver", () => {
+  test("a batch is for the document that named it, and no other", () => {
+    const { runtime, internal, token } = setup();
+    const seen: unknown[] = [];
+    runtime.on("tick", (v) => seen.push(v));
+
+    internal.deliver({ d: token, m: [{ t: "event", n: "tick", p: 1 }] });
+    // What Go held for another document, which the window showed before.
+    internal.deliver({ d: "another-document", m: [{ t: "event", n: "tick", p: 2 }] });
+    // A batch that names none, as before the page's dom-ready: replies name their own.
+    internal.deliver({ m: [{ t: "event", n: "tick", p: 3 }] });
+    expect(seen).toEqual([1, 3]);
+  });
+
+  test("replies keep to their own document in a batch for it", async () => {
+    const { sent, runtime, internal, token } = setup();
+    const p = runtime.call("A.Do");
+    const { id, k } = sent[0] as CallMsg;
+    expect(k).toBe(token);
+    internal.deliver({ d: "another-document", m: [{ t: "reply", id, k, ok: true, v: "wrong" }] });
+    internal.deliver({ d: token, m: [{ t: "reply", id, k, ok: true, v: "right" }] });
+    expect(await p).toBe("right");
+  });
+});
+
 describe("channels", () => {
   type AckMsg = Extract<Outgoing, { t: "chan-ack" }>;
   type CloseMsg = Extract<Outgoing, { t: "chan-close" }>;

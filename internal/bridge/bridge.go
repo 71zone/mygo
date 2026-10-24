@@ -29,9 +29,6 @@ type Config struct {
 	// Trust says which pages get the bridge: the others find none of it
 	// (neither window.mygo nor the channel to Go).
 	Trust Trust `json:"trust"`
-	// Find installs only what Page.FindInPage needs, in a page that has no
-	// bridge, and takes it away with StopFindInPage.
-	Find bool `json:"find,omitempty"`
 }
 
 // Trust is the rule of the core's isTrusted, as the bridge applies it to
