@@ -3,6 +3,9 @@
 package mygo
 
 import (
+	"errors"
+	"maps"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,5 +133,46 @@ func TestClearBrowsingDataFake(t *testing.T) {
 	}
 	if onMainValue(func() int { return fb.Cleared }) != before+1 {
 		t.Error("the backend did not clear")
+	}
+}
+
+// TestClearStorageFake sends a StorageID to the backend, and neither the
+// empty one nor an invalid one: those fail before it.
+func TestClearStorageFake(t *testing.T) {
+	counts := func() map[string]int {
+		return onMainValue(func() map[string]int { return maps.Clone(fb.StorageCleared) })
+	}
+	before := counts()
+	cleared := onMainValue(func() int { return fb.Cleared })
+	if err := App.ClearStorage("acct-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := App.ClearStorage("acct-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := App.ClearStorage("acct-b"); err != nil {
+		t.Fatal(err)
+	}
+	after := counts()
+	want := maps.Clone(before)
+	if want == nil {
+		want = map[string]int{}
+	}
+	want["acct-a"] += 2
+	want["acct-b"]++
+	if !maps.Equal(after, want) {
+		t.Errorf("the backend cleared %v, want %v: acct-a twice, acct-b once, no other ID", after, want)
+	}
+	if onMainValue(func() int { return fb.Cleared }) != cleared {
+		t.Error("ClearStorage cleared the default store")
+	}
+
+	for _, id := range []string{"", "a/b", strings.Repeat("x", 65)} {
+		if err := App.ClearStorage(id); !errors.Is(err, ErrInvalidStorageID) {
+			t.Errorf("ClearStorage(%q) = %v, want ErrInvalidStorageID", id, err)
+		}
+	}
+	if got := counts(); !maps.Equal(got, after) {
+		t.Errorf("an ID that is not valid reached the backend: %v", got)
 	}
 }

@@ -77,6 +77,7 @@ type PageOptions struct {
 	//
 	// Without one a page uses the default store, which the pages without
 	// a StorageID share: App.ClearBrowsingData and Cookies act on it only.
+	// App.ClearStorage clears the store of one StorageID.
 	//
 	// An ID is 1 to 64 letters, digits, "-", "_" and "." (capitals and
 	// lowercase letters differ). NewWebView returns an error matching

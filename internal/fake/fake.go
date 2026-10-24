@@ -96,6 +96,8 @@ type Backend struct {
 	ActivationToken string
 	// Cleared counts ClearBrowsingData calls.
 	Cleared int
+	// StorageCleared counts ClearStorage calls by StorageID.
+	StorageCleared map[string]int
 	// cookies holds the cookies of the pages, by name, domain and path.
 	cookies map[platform.CookieKey]platform.Cookie
 	// contentLists are the content rule lists compiled, by identifier;
@@ -878,6 +880,18 @@ func (a app) ClearBrowsingData(done func(error)) {
 	a.b.mu.Lock()
 	a.b.Cleared++
 	clear(a.b.cookies)
+	a.b.mu.Unlock()
+	done(nil)
+}
+
+// ClearStorage counts the call of each StorageID in StorageCleared: the
+// fake keeps one store of cookies, whatever a page's StorageID.
+func (a app) ClearStorage(storageID string, done func(error)) {
+	a.b.mu.Lock()
+	if a.b.StorageCleared == nil {
+		a.b.StorageCleared = map[string]int{}
+	}
+	a.b.StorageCleared[storageID]++
 	a.b.mu.Unlock()
 	done(nil)
 }
