@@ -1045,10 +1045,11 @@ page called may return after the window moved on to a page that is not
 trusted. Three things keep a message from reaching the wrong document, each
 enough for a case the others miss:
 
-- Go sends nothing while the page it knows of is not trusted, drops the
-  outbox at `NavigationCommitted`, and does not queue the reply of a call
-  whose page context is canceled. `held` events stay: they are for the next
-  trusted page, which they reach at its dom-ready only.
+- Go drops the outbox at `NavigationCommitted`, and does not queue the
+  reply of a call whose page context is canceled, so once Go has heard of
+  the navigation nothing queued for the page that went is left to send.
+  `held` events stay: they are for the next trusted page, which they reach
+  at its dom-ready only.
 - The bridge defines `window.__mygo` in every document at document start,
   before a script of the page runs, as a property that cannot be changed
   or deleted, so the evaluated `__mygo.deliver(...)` never calls a function
