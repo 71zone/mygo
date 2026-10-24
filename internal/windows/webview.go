@@ -103,6 +103,7 @@ func (w *window) withWebViewOr(fn func(), fail func(error)) {
 
 // failPending fails the calls waiting for the webview.
 func (w *window) failPending(err error) {
+	w.answerPopup(0)
 	failCookieRequests(w, err)
 	pending := w.pending
 	w.pending = nil
@@ -231,7 +232,9 @@ func (w *window) setUp(controller uintptr) {
 	}
 	w.applyWebViewBackground()
 
-	w.addUserScripts()
+	if w.popup == nil {
+		w.addUserScripts(nil)
+	}
 
 	// The add methods write a registration token. Its address is taken in
 	// each call (go:uintptrescapes), as a uintptr saved earlier goes stale
@@ -277,11 +280,9 @@ func (w *window) setUp(controller uintptr) {
 			w.h.RenderProcessGone("unresponsive")
 		}
 	})
-	add(wvAddWebResourceRequested, w.resourceRequested)
-	for _, scheme := range o.Schemes {
-		w.addFilter("http://" + scheme + ".localhost/*")
+	if w.popup == nil {
+		w.watchRequests()
 	}
-	w.filterAllRequests()
 	withHandler(w.acceleratorKeyPressed, func(h uintptr) uintptr {
 		return comCall(controller, ctlAddAcceleratorKeyPressed, h, uintptr(unsafe.Pointer(&tok)))
 	})
@@ -301,11 +302,18 @@ func (w *window) setUp(controller uintptr) {
 	if o.Zoom > 0 && o.Zoom != 1 {
 		w.SetZoom(o.Zoom)
 	}
-	w.b.applyWebViewTheme(w)
+	if w.popup == nil {
+		w.b.applyWebViewTheme(w) // a popup's, once its web contents are there
+	}
 	if w.IsFocused() {
 		w.focusWebView()
 	}
 
+	if w.popup != nil {
+		// The page the event opens loads into the web view.
+		w.openPopup()
+		return
+	}
 	if !w.b.holdForCookies(w) {
 		w.becomeReady()
 	}
@@ -523,12 +531,86 @@ func (w *window) DroppedFiles() []string {
 	return paths
 }
 
+// popupRequest is the NewWindowRequested event of a page, held until the
+// web view of the window opened for it exists. WebView2 keeps the relation
+// of the new page to its opener (window.opener, window.name, postMessage
+// and the page's own window.close) only if the host gives the event a web
+// view to load the page into: one the host navigates itself has none.
+type popupRequest struct{ args, deferral uintptr }
+
+// takePopup holds the NewWindowRequested event that asked for w
+// (WindowOptions.Native) until w's web view answers it, so that w may
+// create the web view after the event handler returned.
+func (w *window) takePopup() {
+	args := w.opts.Native
+	if args == 0 {
+		return
+	}
+	var deferral uintptr
+	if failed(comCall(args, newWinGetDeferral, uintptr(unsafe.Pointer(&deferral)))) || deferral == 0 {
+		return
+	}
+	addRef(args)
+	w.popup = &popupRequest{args, deferral}
+}
+
+// openPopup gives the event w holds its web view and completes it, once the
+// scripts of the page are added: WebView2 wants them added before the web
+// contents it opens in the web view replace the old, and the handler of
+// requests after.
+func (w *window) openPopup() {
+	w.addUserScripts(func() {
+		if w.popup == nil {
+			return // the window closed
+		}
+		w.answerPopup(w.webview)
+		w.b.applyWebViewTheme(w)
+		if w.scriptsStale {
+			w.scriptsStale = false
+			w.SetUserScripts(w.opts.UserScripts)
+		}
+		if !w.b.holdForCookies(w) {
+			w.becomeReady()
+		}
+	})
+}
+
+// answerPopup gives the event w holds its web view, or none if the window
+// has no web view, and completes the event.
+func (w *window) answerPopup(webview uintptr) {
+	p := w.popup
+	if p == nil {
+		return
+	}
+	w.popup = nil
+	if webview != 0 {
+		// The handler of requests has to be added after the web view is
+		// set: WebView2 replaces its web contents then.
+		comCall(p.args, newWinPutNewWindow, webview)
+		w.watchRequests()
+	}
+	comCall(p.deferral, deferralComplete)
+	release(p.deferral)
+	release(p.args)
+}
+
 func (w *window) newWindowRequested(_, args uintptr) {
-	// WebView2 must not open windows of its own.
+	// WebView2 must not open windows of its own: the window the app's
+	// handler creates answers the event with its web view (takePopup).
 	comCall(args, newWinPutHandled, 1)
 	var p uintptr
 	comCall(args, newWinGetURI, uintptr(unsafe.Pointer(&p)))
-	req := platform.NewWindowRequest{URL: w.appURL(takeWstr(p))}
+	raw := takeWstr(p)
+	req := platform.NewWindowRequest{URL: w.appURL(raw)}
+	// WebView2 starts loading the page into the web view the event is
+	// given as soon as it is set, before the handler of requests the web
+	// view needs to be given after (answerPopup) can serve it: a page the
+	// app serves would fail, and the web messages of a page that shares
+	// the process of its opener do not reach the app until it navigates.
+	// Such pages load in a window of their own, as on Linux.
+	if w.appURL(raw) == raw && w.webURL(raw) == raw {
+		req.Native = args
+	}
 	var features uintptr
 	if comCall(args, newWinGetWindowFeatures, uintptr(unsafe.Pointer(&features))) == sOK && features != 0 {
 		var hasSize, hasPos int32
@@ -549,9 +631,11 @@ func (w *window) newWindowRequested(_, args uintptr) {
 		}
 		release(features)
 	}
-	// The new window loads the page itself, without a relation to its
-	// opener (as on Linux).
-	if child, ok := w.h.NewWindow(req).(*window); ok && child != nil {
+	// A window that does not take the event (native UI has no web view of
+	// its own to give it; a page a custom scheme serves cannot be asked
+	// for: see the comment above) loads the page itself, without a relation
+	// to its opener.
+	if child, ok := w.h.NewWindow(req).(*window); ok && child != nil && child.popup == nil {
 		child.LoadURL(req.URL)
 	}
 }
@@ -682,7 +766,8 @@ func (w *window) IsLoading() bool { return w.loading }
 
 // addUserScripts adds the user scripts of the options to every document,
 // and the title bar's after them, keeping their ids, which arrive later.
-func (w *window) addUserScripts() {
+// done, unless nil, runs once WebView2 answered all the calls.
+func (w *window) addUserScripts(done func()) {
 	scripts := w.opts.UserScripts
 	if w.caption != nil {
 		// After the bridge, which it tells.
@@ -692,6 +777,12 @@ func (w *window) addUserScripts() {
 		scripts = append(scripts[:len(scripts):len(scripts)], platform.UserScript{Source: w.hidingScript, AllFrames: true})
 	}
 	gen := w.scriptGen
+	left := len(scripts) + 1 // and the loop
+	answered := func() {
+		if left--; left == 0 && done != nil {
+			done()
+		}
+	}
 	for _, us := range scripts {
 		src := us.Source
 		if us.AtDocumentEnd {
@@ -701,7 +792,8 @@ func (w *window) addUserScripts() {
 			// Scripts run in every frame unless told otherwise.
 			src = "if(window===window.top){\n" + src + "\n}"
 		}
-		withHandler(func(hr, id uintptr) {
+		hr := withHandler(func(hr, id uintptr) {
+			defer answered()
 			if failed(hr) || id == 0 || w.closed || w.webview == 0 {
 				return
 			}
@@ -714,7 +806,24 @@ func (w *window) addUserScripts() {
 		}, func(h uintptr) uintptr {
 			return comCall(w.webview, wvAddScriptToExecuteOnDocumentCreated, uintptr(unsafe.Pointer(u16(src))), h)
 		})
+		if failed(hr) {
+			answered() // the call never does
+		}
 	}
+	answered()
+}
+
+// watchRequests has WebView2 tell the window about the requests of its
+// pages, those the custom schemes serve and, with content rules, all.
+func (w *window) watchRequests() {
+	var tok int64
+	withHandler(w.resourceRequested, func(h uintptr) uintptr {
+		return comCall(w.webview, wvAddWebResourceRequested, h, uintptr(unsafe.Pointer(&tok)))
+	})
+	for _, scheme := range w.opts.Schemes {
+		w.addFilter("http://" + scheme + ".localhost/*")
+	}
+	w.filterAllRequests()
 }
 
 // SetUserScripts replaces the user scripts. Scripts run in the order they
@@ -727,12 +836,16 @@ func (w *window) SetUserScripts(scripts []platform.UserScript) {
 	if w.webview == 0 {
 		return // setUp adds them
 	}
+	if w.popup != nil {
+		w.scriptsStale = true // openPopup adds them again once the event completed
+		return
+	}
 	w.scriptGen++
 	for _, id := range w.scriptIDs {
 		comCall(w.webview, wvRemoveScriptToExecuteOnDocumentCreated, uintptr(unsafe.Pointer(u16(id))))
 	}
 	w.scriptIDs = nil
-	w.addUserScripts()
+	w.addUserScripts(nil)
 }
 
 func (w *window) Eval(js string) {
