@@ -23,7 +23,7 @@ func (w *Window) eval(ctx context.Context, code string) ([]byte, error) { return
 
 func (w *Window) sendTitleBar() {}
 
-func (w *Window) handleMessage(msg string) {}
+func (w *Window) handleMessage(msg, pageURL string) {}
 
 func findScript(text string, opts FindOptions) string { return "" }
 

@@ -291,6 +291,12 @@ type Window struct {
 	// Main thread only.
 	trusted        bool
 	trustedOrigins []string
+	// senderURL is the URL of the last document trustsSender judged,
+	// senderTrusted its trust, and senderGen the protocol generation it
+	// was judged in (zero: none yet). Main thread only.
+	senderURL     string
+	senderTrusted bool
+	senderGen     uint64
 	// html is the document LoadHTML loaded, while it is the page's or
 	// about to be. Main thread only.
 	html *htmlDocument
@@ -1719,7 +1725,7 @@ func (h *windowHandler) TitleBarChanged() {
 	}
 }
 
-func (h *windowHandler) Message(msg string) { h.w.handleMessage(msg) }
+func (h *windowHandler) Message(msg, url string) { h.w.handleMessage(msg, url) }
 
 func (h *windowHandler) WillNavigate(nav platform.Navigation) bool {
 	if doc := h.w.html; nav.IsMainFrame && nav.Reload && doc != nil && doc.shown {

@@ -214,17 +214,23 @@ func (w *Window) sendTitleBar() {
 	}
 }
 
-// handleMessage routes a message posted by the page bridge. It runs on the
-// main thread.
-func (w *Window) handleMessage(msg string) {
+// handleMessage routes a message posted by the page bridge, from the
+// document at pageURL. It runs on the main thread.
+func (w *Window) handleMessage(msg, pageURL string) {
 	msg, ok := strings.CutPrefix(msg, w.secret)
 	if !ok {
 		return // not from the bridge
 	}
+	trusted := w.trustsSender(pageURL)
 	// Calls are decoded and executed off the main thread. The page context
 	// is captured here so a navigation cannot slip in between.
 	if len(msg) > 12 && msg[:12] == `{"t":"call",` {
-		go handleCall(w, w.pageContext(), msg, w.trusted)
+		go handleCall(w, w.pageContext(), msg, trusted)
+		return
+	}
+	if !trusted {
+		// Only the bridge of a trusted page has any business with the rest.
+		// What a page that is not trusted still posts stops here.
 		return
 	}
 	var m struct {
@@ -273,6 +279,21 @@ func (w *Window) handleMessage(msg string) {
 	case "chan-close":
 		w.pageClosedChannel(m.C, m.K)
 	}
+}
+
+// trustsSender reports whether a message from the document at pageURL is a
+// trusted page's: the page showing is trusted, as the last navigation
+// decided, and so is the document. The decision for the last URL is kept,
+// as pages post many messages, for as long as the protocols are the same.
+// A message without a URL is nobody's. Main thread only.
+func (w *Window) trustsSender(pageURL string) bool {
+	if !w.trusted || pageURL == "" {
+		return false
+	}
+	if gen := Protocol.generation(); pageURL != w.senderURL || gen != w.senderGen {
+		w.senderURL, w.senderTrusted, w.senderGen = pageURL, w.isTrusted(pageURL), gen
+	}
+	return w.senderTrusted
 }
 
 // findScript returns the script with which FindInPage asks the bridge.

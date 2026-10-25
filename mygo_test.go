@@ -93,10 +93,14 @@ func readyWindow(t *testing.T, opts WindowOptions) (*Window, *fake.Window) {
 	return w, fw
 }
 
-// page simulates the page bridge posting a message.
-func page(fw *fake.Window, msg string) {
+// page simulates the page bridge posting a message, from the page testWindow
+// loads.
+func page(fw *fake.Window, msg string) { pageAt(fw, "about:blank", msg) }
+
+// pageAt simulates the bridge posting a message from the document at url.
+func pageAt(fw *fake.Window, url, msg string) {
 	s := secret(fw)
-	onMain(func() { fw.H.Message(s + msg) })
+	onMain(func() { fw.H.Message(s+msg, url) })
 }
 
 // secret returns the secret the bridge of fw prefixes its messages with.
@@ -575,8 +579,8 @@ func TestMessagesNeedTheSecret(t *testing.T) {
 	bindForTest(t, "Secret", svc)
 	_, fw := readyWindow(t, WindowOptions{})
 	forged := `{"t":"call","id":1,"k":"tok","m":"Secret.Hello","a":["x"]}`
-	onMain(func() { fw.H.Message(forged) })
-	onMain(func() { fw.H.Message("wrong" + forged) })
+	onMain(func() { fw.H.Message(forged, "about:blank") })
+	onMain(func() { fw.H.Message("wrong"+forged, "about:blank") })
 	time.Sleep(50 * time.Millisecond)
 	if n := svc.calls.Load(); n != 0 {
 		t.Fatalf("forged messages ran the method %d times", n)
@@ -926,7 +930,7 @@ func TestEventsWaitForDOMReady(t *testing.T) {
 	received(t, fw, func(m map[string]any) bool { return m["n"] == "test:early" && m["p"] == "first" })
 
 	// After a navigation, events wait for the new page.
-	onMain(func() { fw.H.NavigationCommitted("https://next.example/") })
+	onMain(func() { fw.H.NavigationCommitted("mygo://localhost/next") })
 	n := len(fw.Scripts())
 	_ = ev.Emit(w, "second")
 	time.Sleep(20 * time.Millisecond)
@@ -964,7 +968,7 @@ func TestHiddenTitleBar(t *testing.T) {
 
 	// A later page hears it once its DOM is ready: the script the backend
 	// runs at document start may be older.
-	onMain(func() { fw.H.NavigationCommitted("https://next.example/") })
+	onMain(func() { fw.H.NavigationCommitted("mygo://localhost/next") })
 	n := len(fw.Scripts())
 	page(fw, `{"t":"dom-ready"}`)
 	received(t, fw, titleBar(23, 40, 0))

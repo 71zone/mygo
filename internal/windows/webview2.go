@@ -86,6 +86,7 @@ const (
 	navStarting3GetNavigationKind = 12
 	navCompletedGetIsSuccess      = 3
 	navCompletedGetWebErrorStatus = 4
+	msgGetSource                  = 3
 	msgTryGetWebMessageAsString   = 5
 	msg2GetAdditionalObjects      = 6
 	objectsGetCount               = 3

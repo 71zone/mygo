@@ -629,8 +629,10 @@ type WindowHandler interface {
 	// window enters full screen or the desktop's button layout changes.
 	TitleBarChanged()
 
-	// Message delivers a message posted by the renderer bridge.
-	Message(msg string)
+	// Message delivers a message posted by the renderer bridge; url is the
+	// URL of the document that posted it (backends that cannot tell the
+	// frame report the page's current URL; "" when unknown).
+	Message(msg, url string)
 	// WillNavigate is called before a navigation; returning false cancels it.
 	WillNavigate(nav Navigation) bool
 	NavigationStarted(url string)

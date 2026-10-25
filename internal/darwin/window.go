@@ -1723,14 +1723,16 @@ func registerWindowClasses() {
 				}
 				// The handler is reachable from every frame; only the
 				// page's own bridge may talk to Go.
-				if frame := send(msg, "frameInfo"); frame == 0 || !sendBool(frame, "isMainFrame") {
+				frame := send(msg, "frameInfo")
+				if frame == 0 || !sendBool(frame, "isMainFrame") {
 					return
 				}
 				body := send(msg, "body")
 				if body == 0 || !sendBool(body, "isKindOfClass:", uintptr(class("NSString"))) {
 					return
 				}
-				w.h.Message(goString(body))
+				// A nil request or URL reads as "".
+				w.h.Message(goString(body), goString(send(send(send(frame, "request"), "URL"), "absoluteString")))
 			}),
 
 			// Key-value observing of the page title and the window's
