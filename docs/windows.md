@@ -504,7 +504,7 @@ Page events, on `win.Page()`:
 | `OnDidNavigate(func(url string))` | a navigation committed |
 | `OnDOMReady` | the page's DOM is ready (`DOMContentLoaded`) |
 | `OnDidFinishLoad` | the page finished loading |
-| `OnDidFailLoad(func(err *mygo.LoadError))` | the page failed to load |
+| `OnDidFailLoad(func(err *mygo.LoadError))` | the page failed to load; a navigation that `OnWillNavigate` prevented, that another navigation replaced, or that `Stop` ended is no failure |
 | `OnPageTitleUpdated(func(e *mygo.TitleEvent))` | the page's `<title>` changed; preventing the event keeps the window title as it is |
 | `OnRenderProcessGone(func(reason string))` | the web content process crashed or was killed; `Reload` recovers |
 
