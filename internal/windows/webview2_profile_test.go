@@ -3,6 +3,8 @@
 package windows
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -37,5 +39,29 @@ func TestProfileName(t *testing.T) {
 			t.Errorf("profileName(%q) and profileName(%q) are one profile, %q", id, other, name)
 		}
 		seen[key] = id
+	}
+}
+
+// TestProfileStored checks how ClearStorage finds the directory WebView2
+// made for a profile: WV2Profile_ and the profile's name, in EBWebView of
+// the user data folder, and nothing else.
+func TestProfileStored(t *testing.T) {
+	userData := t.TempDir()
+	if profileStored(userData, "acct-a") {
+		t.Error("a user data folder with no EBWebView has the profile")
+	}
+	ebWebView := filepath.Join(userData, "EBWebView")
+	for _, dir := range []string{"Default", "WV2Profile_" + strings.ToUpper(profileName("acct-a")), "WV2Profile_" + profileName("acct-b")} {
+		if err := os.MkdirAll(filepath.Join(ebWebView, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(ebWebView, "WV2Profile_"+profileName("acct-c")), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]bool{"acct-a": true, "acct-b": true, "acct-c": false, "acct-d": false, "default": false} {
+		if got := profileStored(userData, id); got != want {
+			t.Errorf("profileStored(%q) = %v, want %v", id, got, want)
+		}
 	}
 }

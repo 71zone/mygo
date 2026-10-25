@@ -52,16 +52,15 @@ func profileName(id string) string {
 	return storageProfilePrefix + hex.EncodeToString(sum[:20])
 }
 
-// profileOptions returns what creating w's controller with its profile
-// needs: the environment's ICoreWebView2Environment10 and the controller
-// options naming the profile, which the caller releases. A window without a
-// storage ID gets zeros, and creates its controller as before.
-func (w *window) profileOptions() (env10, options uintptr, err error) {
-	id := w.opts.StorageID
+// profileOptions returns what creating a controller with the profile of
+// storage ID id needs: the environment's ICoreWebView2Environment10 and the
+// controller options naming the profile, which the caller releases. An
+// empty id gets zeros, and creates its controller as before.
+func (b *Backend) profileOptions(id string) (env10, options uintptr, err error) {
 	if id == "" {
 		return 0, 0, nil
 	}
-	env10 = queryInterface(w.b.env, &iidICoreWebView2Environment10)
+	env10 = queryInterface(b.env, &iidICoreWebView2Environment10)
 	if env10 == 0 {
 		return 0, 0, fmt.Errorf("mygo: a page with a StorageID needs the WebView2 Runtime 1.0.1210.39 or newer: %w", platform.ErrUnsupported)
 	}
