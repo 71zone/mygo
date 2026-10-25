@@ -20,10 +20,8 @@ import (
 )
 
 // popupKeepsOpener tells whether a window a page opens has window.opener on
-// this platform with the code under test. Linux opens independent pages
-// (and has no StorageID), and WebView2 popups keep their opener only where
-// the host gives the event a web view to load the page in.
-var popupKeepsOpener = runtime.GOOS == "darwin"
+// this platform. Linux opens independent pages (and has no StorageID).
+var popupKeepsOpener = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 
 // TestWindowOpenKeepsStorage checks that a window a page opens with
 // window.open shares the data store of the page that opened it, and no
