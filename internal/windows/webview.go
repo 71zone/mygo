@@ -412,10 +412,24 @@ func (w *window) navigationCompleted(_, args uintptr) {
 	}
 	var status int32
 	comCall(args, navCompletedGetWebErrorStatus, uintptr(unsafe.Pointer(&status)))
-	if status == 13 { // COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED: another navigation
+	if navigationCancelled(status) {
 		return
 	}
 	w.h.LoadFailed(w.URL(), int(status), "navigation failed (COREWEBVIEW2_WEB_ERROR_STATUS "+strconv.Itoa(int(status))+")")
+}
+
+// COREWEBVIEW2_WEB_ERROR_STATUS values the backend names.
+const (
+	webErrorHostNameNotResolved = 13
+	webErrorOperationCanceled   = 14
+)
+
+// navigationCancelled reports whether a navigation that did not complete
+// ended because it was cancelled, by the app (a will-navigate handler
+// that prevented it) or by another navigation that replaced it, which no
+// more is a failed load than on the other platforms.
+func navigationCancelled(status int32) bool {
+	return status == webErrorOperationCanceled
 }
 
 // downloadStarting asks where to save a download, instead of WebView2's own
