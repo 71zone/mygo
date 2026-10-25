@@ -491,6 +491,7 @@ mygo.NewWindow(mygo.WindowOptions{
 | `ZoomFactor`, `UserAgent` | the page's zoom (1 is 100%) and user agent |
 | `SafariTabFocus` | leaves Tab to text fields and elements with a tabindex, as Safari does unless the system's keyboard navigation is on; by default Tab reaches links, buttons, checkboxes and selects too (macOS) |
 | `UserAgentSuffix` | appended to the user agent instead of replacing it, which `UserAgent` does, such as `"MyApp/1.2"`; it appends to `UserAgent` too, and `SetUserAgent` keeps it, and leading and trailing spaces are trimmed |
+| `StorageID` | the page's own store of cookies, local storage, IndexedDB and cache, shared by the pages with the same ID, see [separate sign-ins](#separate-sign-ins) |
 | `ContentRules` | rules that block what the page loads and hide parts of it, see [blocking content](#blocking-content) |
 
 `UserAgentSuffix` is for the sites that want to see the app, and for the ones
@@ -525,6 +526,61 @@ check the host, or `mygo.IsDev()`, when your rule depends on the scheme.
 
 Links that open new windows go through the window's open handler, see
 [links and new windows](frontend.md#links-and-new-windows).
+
+### Separate sign-ins
+
+The pages of an app share one store of cookies, local storage, IndexedDB
+and cache, so a site signed in on one page is signed in on all. To sign
+two accounts of a site in at once, as a client of several mailboxes
+does, give each account's page a `StorageID`:
+
+```go
+for _, account := range []string{"work", "home"} {
+	view, err := win.NewWebView(mygo.WebViewOptions{
+		URL:  "https://mail.example.com/",
+		Page: mygo.PageOptions{StorageID: account},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	views[account] = view
+}
+```
+
+Pages with the same `StorageID`, windows and web views alike, share one
+store, which stays from one run of the app to the next, and pages with
+different ones, or none, share nothing. A page's `StorageID` is fixed
+when it is made. A window the page opens (`SetWindowOpenHandler`) uses
+its store, whatever the `StorageID` of the options the handler returns.
+A window showing native UI has no page, and so no store: its
+`StorageID` does nothing, and its web views' do.
+
+An ID is 1 to 64 letters, digits, `-`, `_` and `.`, and capitals and
+lowercase letters tell IDs apart. `NewWebView` returns an error
+matching `mygo.ErrInvalidStorageID` for another, and `NewWindow`, which
+returns no error, panics with one, as it does for an invalid
+`BackgroundColor`. Where the system cannot keep stores apart, the call
+fails with an error matching `errors.ErrUnsupported`, so an app can
+fall back to one account:
+
+```go
+if errors.Is(err, errors.ErrUnsupported) {
+	// One store only: ask the user to sign out first.
+}
+```
+
+| | `StorageID` |
+|---|---|
+| macOS | `WKWebsiteDataStore` of an identifier (macOS 14 or newer): MyGo makes the identifier, a UUID, of the ID, and WebKit keeps the data in `~/Library/WebKit/<bundle id>/WebsiteDataStore/`. Before macOS 14, the call fails with `errors.ErrUnsupported` |
+| Windows | a WebView2 profile in the app's one environment (`ICoreWebView2Environment10`, WebView2 Runtime 1.0.1210.39 or newer), a directory in `EBWebView` of the user data folder (`%LocalAppData%\<Name>\WebView2`) named `mygo-` and the first 40 hex digits of the ID's SHA-256, as profile names ignore case and may not end with a period. With an older runtime the page gets no web view: the error, matching `errors.ErrUnsupported`, is logged and what the page's methods return, as WebView2 makes web views after `NewWebView` and `NewWindow` return |
+| Linux | not supported: WebKitGTK's web views share one data manager; the call fails with `errors.ErrUnsupported` |
+
+`App.ClearBrowsingData` and `mygo.Cookies` act on the default store only
+(see [browsing data](app.md#browsing-data)), and leave the data of a page
+with a `StorageID` alone. MyGo has no call yet to clear or delete the
+store of a `StorageID`: the site's own sign out clears what the site
+keeps there, and `Page.Eval` what its scripts can reach (not `HttpOnly`
+cookies).
 
 ### Find in page
 
