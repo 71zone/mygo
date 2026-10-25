@@ -822,7 +822,7 @@ func TestChannels(t *testing.T) {
 	// So does navigating away.
 	page(fw, `{"t":"call","id":4,"k":"tok","m":"Stream.Wait","a":[10]}`)
 	received(t, fw, func(m map[string]any) bool { return m["c"] == float64(10) && m["p"] == "ready" })
-	onMain(func() { fw.H.NavigationCommitted("about:blank#next") })
+	onMain(func() { fw.H.NavigationCommitted("mygo://localhost/next") })
 	if err := <-s.stopped; !errors.Is(err, context.Canceled) {
 		t.Errorf("call context after navigating: %v", err)
 	}

@@ -315,7 +315,7 @@ func TestDOMReadyWithoutBridge(t *testing.T) {
 
 	// A trusted page: its bridge tells, and the backend's word is not what
 	// counts for it.
-	navigate("about:blank")
+	navigate("mygo://localhost/")
 	onMain(fw.H.DOMContentLoaded)
 	onMain(fw.H.LoadFinished)
 	check("a trusted page, before its bridge told", 3, 4)

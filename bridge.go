@@ -36,13 +36,18 @@ func (w *Window) bridgeScript() string {
 
 // bridgeTrust is the rule of isTrusted as data, for the bridge in the page,
 // which gives its page none of itself unless the page is trusted. Keep the
-// two in step (TestBridgeTrust).
+// two in step (TestBridgeTrust). It cannot tell which about: document the
+// app made, as the core does at NavigationCommitted: the bridge in an
+// about: page of a window the app made lets Go judge.
 func (w *Window) bridgeTrust() bridge.Trust {
 	t := bridge.Trust{
-		Schemes:  []string{"about", "file"},
+		Schemes:  []string{"file"},
 		Origins:  []string{},
 		Hosted:   []string{},
 		Loopback: IsDev(),
+	}
+	if !w.popup {
+		t.Schemes = append(t.Schemes, "about")
 	}
 	// The frontend's scheme is among them.
 	for _, s := range Protocol.schemes() {

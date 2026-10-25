@@ -4,12 +4,141 @@ package mygo
 
 import (
 	"context"
+	"encoding/json/v2"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/egoist/mygo/internal/bridge"
+	"github.com/egoist/mygo/internal/fake"
+	"github.com/egoist/mygo/internal/platform"
 )
+
+// popupOf makes the window w opens for a request of its page, as the
+// backend does, and returns the popup with its fake native window.
+func popupOf(t *testing.T, w *Window, fw *fake.Window, opts WindowOptions) (*Window, *fake.Window) {
+	t.Helper()
+	w.Page().SetWindowOpenHandler(func(WindowOpenRequest) *WindowOptions { return &opts })
+	onMain(func() { fw.H.NewWindow(platform.NewWindowRequest{URL: "about:blank", Native: 1}) })
+	wins := fb.Windows()
+	pw := wins[len(wins)-1]
+	var popup *Window
+	windows.Lock()
+	for _, c := range windows.list {
+		if c.native != nil && c.popup {
+			popup = c
+		}
+	}
+	windows.Unlock()
+	if popup == nil {
+		t.Fatal("the open handler made no popup")
+	}
+	t.Cleanup(popup.Destroy)
+	return popup, pw
+}
+
+// TestAboutDocumentsOfTheApp: a document at about:blank has the origin of the
+// page that made it, so it is trusted when the app made it, not for its
+// scheme: the one LoadHTML loads, and the first of a window, but not one a
+// page made by navigating its window to about:blank.
+func TestAboutDocumentsOfTheApp(t *testing.T) {
+	bindForTest(t, "About", &testService{})
+	w, fw := testWindow(t, WindowOptions{})
+	id := 100
+	calls := func(what string, want bool) {
+		t.Helper()
+		id++
+		if m := call(t, fw, id, "About.Hello", "x"); m["ok"] != want {
+			t.Errorf("%s: a call ok = %v, want %v (%v)", what, m["ok"], want, m["e"])
+		}
+	}
+	calls("the window's first document, a blank page", true)
+
+	onMain(func() { fw.H.NavigationCommitted("about:blank") })
+	calls("a page that navigated to about:blank", false)
+	onMain(func() { fw.H.NavigationCommitted("about:blank#a") })
+	calls("a blank page with a fragment", false)
+	onMain(func() { fw.H.NavigationCommitted("about:srcdoc") })
+	calls("about:srcdoc", false)
+
+	w.Page().LoadHTML("<p>app</p>", "")
+	onMain(func() { fw.H.NavigationCommitted("about:blank") })
+	calls("the HTML the app loaded", true)
+
+	onMain(func() { fw.H.NavigationCommitted("about:blank") })
+	calls("a page that replaced the app's document with about:blank", false)
+
+	// The HTML of an app that gives a base URL is at that URL, which is trusted by its own rule.
+	w.Page().LoadHTML("<p>app</p>", "https://evil.example/")
+	onMain(func() { fw.H.NavigationCommitted("https://evil.example/") })
+	calls("HTML at an origin that is not trusted", false)
+}
+
+// TestAboutDocumentsOfPopups: a popup shows what the page that opened it
+// makes, so no about: page of it is trusted, the one it opens with included,
+// and the bridge in it knows no about: schemes. A popup that shows a page of
+// a trusted origin is still trusted.
+func TestAboutDocumentsOfPopups(t *testing.T) {
+	bindForTest(t, "Popup", &testService{})
+	w, fw := testWindow(t, WindowOptions{})
+	popup, pfw := popupOf(t, w, fw, WindowOptions{Page: PageOptions{TrustedOrigins: []string{"https://partner.example"}}})
+
+	var cfg struct {
+		Trust bridge.Trust `json:"trust"`
+	}
+	src := pfw.UserScripts()[0].Source
+	if err := json.Unmarshal([]byte(strings.TrimSuffix(src[strings.LastIndex(src, "})(")+3:], ");")), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(cfg.Trust.Schemes, "about") || !slices.Contains(cfg.Trust.Schemes, "file") {
+		t.Errorf("the schemes a popup's bridge trusts: %v", cfg.Trust.Schemes)
+	}
+	if bridgeAllows(cfg.Trust, "about:blank") || !bridgeAllows(cfg.Trust, "https://partner.example/") {
+		t.Errorf("the pages a popup's bridge trusts: %+v", cfg.Trust)
+	}
+
+	id := 200
+	calls := func(url string, want bool) {
+		t.Helper()
+		id++
+		onMain(func() { pfw.H.NavigationCommitted(url) })
+		sender := url
+		s := secret(pfw)
+		onMain(func() {
+			pfw.H.Message(s+`{"t":"call","id":`+strconv.Itoa(id)+`,"k":"tok","m":"Popup.Hello","a":["x"]}`, sender)
+		})
+		m := received(t, pfw, func(m map[string]any) bool { return m["t"] == "reply" && m["id"] == float64(id) })
+		if m["ok"] != want {
+			t.Errorf("popup at %s: a call ok = %v, want %v (%v)", url, m["ok"], want, m["e"])
+		}
+	}
+	calls("about:blank", false) // the first document of the popup, which the opener can write to
+	calls("about:blank", false)
+	calls("https://evil.example/", false)
+	calls("https://partner.example/", true)
+	calls("about:blank", false)
+	if popup.trusted {
+		t.Error("the popup at about:blank is trusted")
+	}
+}
+
+// TestBridgeTrustOfPopups: the rule the bridge applies and isTrusted agree for
+// the windows pages open.
+func TestBridgeTrustOfPopups(t *testing.T) {
+	w := &Window{popup: true}
+	tr := w.bridgeTrust()
+	for _, u := range []string{"about:blank", "about:srcdoc", "file:///x", "https://evil.example/"} {
+		if got, want := bridgeAllows(tr, u), w.isTrusted(u); got != want {
+			t.Errorf("%s: the bridge allows: %v, isTrusted: %v", u, got, want)
+		}
+	}
+	if w.isTrusted("about:blank") {
+		t.Error("about:blank is trusted in a popup")
+	}
+}
 
 // TestDeliveryNamesTheDocument: what the page is sent goes to the document
 // whose dom-ready the core took, which any other document ignores.
@@ -155,5 +284,25 @@ func TestEmptySenderIsNotTrusted(t *testing.T) {
 	onMain(func() {})
 	if n := effects.domReady.Load(); n != 1 {
 		t.Errorf("OnDOMReady ran %d times for three messages, one with a URL", n)
+	}
+}
+
+// TestSupersededLoadHTMLDoesNotMakeAboutTrusted: HTML the app loaded, and
+// that another page replaced before it committed, is no document the app
+// made: an about:blank the page makes after that is not the app's.
+func TestSupersededLoadHTMLDoesNotMakeAboutTrusted(t *testing.T) {
+	bindForTest(t, "Superseded", &testService{})
+	w, fw := testWindow(t, WindowOptions{})
+	w.Page().LoadHTML("<p>app</p>", "")
+	onMain(func() { fw.H.NavigationCommitted("https://evil.example/") })
+	onMain(func() { fw.H.NavigationCommitted("about:blank") })
+	if m := call(t, fw, 1, "Superseded.Hello", "x"); m["ok"] != false {
+		t.Errorf("a call from an about:blank a page made after it replaced the app's HTML: ok = %v", m["ok"])
+	}
+	// The HTML the app loads next is its own.
+	w.Page().LoadHTML("<p>app</p>", "")
+	onMain(func() { fw.H.NavigationCommitted("about:blank") })
+	if m := call(t, fw, 2, "Superseded.Hello", "x"); m["ok"] != true {
+		t.Errorf("a call from the app's HTML: ok = %v (%v)", m["ok"], m["e"])
 	}
 }

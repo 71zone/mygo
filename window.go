@@ -288,10 +288,17 @@ type Window struct {
 	stateKey   string
 	stateTimer *time.Timer
 
-	// trusted reports whether the current page may call bound methods.
-	// Main thread only.
+	// trusted reports whether the current page may call bound methods: the
+	// document the last navigation committed is a trusted page's (see
+	// NavigationCommitted). Main thread only.
 	trusted        bool
 	trustedOrigins []string
+	// popup is a window a page opened (SetWindowOpenHandler): no `about:`
+	// document of it is the app's own (isTrusted).
+	popup bool
+	// navigated reports that a document committed in this window already;
+	// the first one, a blank page, is the window's own. Main thread only.
+	navigated bool
 	// senderURL is the URL of the last document trustsSender judged,
 	// senderTrusted its trust, and senderGen the protocol generation it
 	// was judged in (zero: none yet). Main thread only.
@@ -407,7 +414,7 @@ func createWindow(caller string, opts WindowOptions, bg *background, flyout *fly
 		panic("mygo: " + caller + " called before the application is ready; create windows in App.WhenReady")
 	}
 	var w *Window
-	onMain(func() { w = newWindow(opts, bg, 0, flyout) })
+	onMain(func() { w = newWindow(opts, bg, 0, flyout, false) })
 	if w == nil {
 		// The event loop has already stopped.
 		w = &Window{}
@@ -450,13 +457,13 @@ func updateBackgrounds() {
 	}
 }
 
-func newWindow(opts WindowOptions, bg *background, native uintptr, flyout *flyoutOptions) *Window {
+func newWindow(opts WindowOptions, bg *background, native uintptr, flyout *flyoutOptions, popup bool) *Window {
 	windows.Lock()
 	windows.nextID++
 	id := windows.nextID
 	windows.Unlock()
 
-	w := &Window{id: id, parent: opts.Parent, trustedOrigins: opts.Page.TrustedOrigins, secret: randomText(), stateKey: opts.StateKey, background: bg, content: opts.Content, panel: opts.Panel && flyout == nil}
+	w := &Window{id: id, parent: opts.Parent, trustedOrigins: opts.Page.TrustedOrigins, popup: popup, secret: randomText(), stateKey: opts.StateKey, background: bg, content: opts.Content, panel: opts.Panel && flyout == nil}
 	w.pg = &Page{w}
 	w.hiddenTitleBar = !opts.Frameless && (opts.TitleBarStyle == TitleBarHidden || opts.TitleBarStyle == TitleBarHiddenInset)
 	w.resetPage()
@@ -1203,7 +1210,12 @@ func (w *Window) isTrusted(rawURL string) bool {
 	}
 	scheme := strings.ToLower(u.Scheme)
 	switch {
-	case scheme == "about" || scheme == "file" || scheme == frontendScheme:
+	case scheme == "about":
+		// Only where the app makes the pages (NavigationCommitted decides
+		// which about: documents are its own): a window a page opened
+		// shows what that page makes.
+		return !w.popup
+	case scheme == "file" || scheme == frontendScheme:
 		return true
 	case Protocol.IsHandled(scheme):
 		return true
@@ -1224,6 +1236,12 @@ func (w *Window) isTrusted(rawURL string) bool {
 		}
 	}
 	return false
+}
+
+// isAbout reports whether rawURL is an about: URL.
+func isAbout(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	return err == nil && strings.EqualFold(u.Scheme, "about")
 }
 
 // LoadHTML loads an HTML string. Relative URLs in it resolve against
@@ -1770,23 +1788,39 @@ func (h *windowHandler) WillNavigate(nav platform.Navigation) bool {
 func (h *windowHandler) NavigationStarted(string) {}
 
 func (h *windowHandler) NavigationCommitted(url string) {
-	if doc := h.w.html; doc != nil {
+	w := h.w
+	own := false // the app made the document
+	if doc := w.html; doc != nil {
 		switch {
 		case doc.shown:
-			h.w.html = nil // another document replaced it
+			w.html = nil // another document replaced it
 		case doc.isAt(url):
 			doc.shown = true
+			own = true
+		default:
+			// Another document committed before the HTML did, and the
+			// web view drops the load of the HTML for it: a later commit
+			// of the same URL is not the app's.
+			w.html = nil
 		}
 	}
-	h.w.trusted = h.w.isTrusted(url)
-	h.w.domLoaded = false
-	h.w.outMu.Lock()
-	h.w.domReady = false
-	h.w.docToken = ""
-	h.w.outbox = nil // all of it was for the document that went
-	h.w.outMu.Unlock()
-	h.w.resetPage()
-	fire1(&h.w.onDidNavigate, url)
+	first := !w.navigated
+	w.navigated = true
+	// A page of a trusted origin is trusted, whoever made the document. An
+	// about: document takes the origin of the page that made it, and a page
+	// can make one in a window it holds (a popup it opened, or the window
+	// it navigates to about:blank): only the documents the app made are
+	// its own, those LoadHTML loads and the blank one a window starts
+	// with.
+	w.trusted = w.isTrusted(url) && (!isAbout(url) || own || first && url == "about:blank")
+	w.domLoaded = false
+	w.outMu.Lock()
+	w.domReady = false
+	w.docToken = ""
+	w.outbox = nil // all of it was for the document that went
+	w.outMu.Unlock()
+	w.resetPage()
+	fire1(&w.onDidNavigate, url)
 }
 
 // DOMContentLoaded is the backend telling, in its own way, that the DOM of
@@ -1851,7 +1885,7 @@ func (h *windowHandler) NewWindow(req platform.NewWindowRequest) platform.Window
 	if err != nil {
 		log.Printf("mygo: window open handler: %v", err)
 	}
-	child := newWindow(o, bg, req.Native, nil)
+	child := newWindow(o, bg, req.Native, nil, true)
 	return child.native
 }
 
