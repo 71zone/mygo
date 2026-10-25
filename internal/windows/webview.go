@@ -87,6 +87,7 @@ func (w *window) withWebViewOr(fn func(), fail func(error)) {
 // failPending fails the calls waiting for the webview.
 func (w *window) failPending(err error) {
 	failCookieRequests(w, err)
+	failStorageClears(w, err)
 	pending := w.pending
 	w.pending = nil
 	for _, c := range pending {
@@ -126,7 +127,7 @@ func (w *window) createWebView() {
 		w.webViewFailed(w.b.envErr)
 		return
 	}
-	env10, options, err := w.profileOptions()
+	env10, options, err := w.b.profileOptions(w.opts.StorageID)
 	if err != nil {
 		w.webViewFailed(err)
 		return

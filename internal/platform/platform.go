@@ -202,6 +202,13 @@ type AppController interface {
 	// ClearBrowsingData deletes the data pages stored; done runs on the
 	// main thread.
 	ClearBrowsingData(done func(error))
+	// ClearStorage deletes what the pages with a StorageID stored (see
+	// WindowOptions.StorageID), and leaves every other store alone; done
+	// runs on the main thread. The ID is valid and not empty. It works
+	// whether or not a page of that ID is open or its store exists. Where
+	// the system cannot keep stores apart, as where a page with a
+	// StorageID fails, done gets an error matching ErrUnsupported.
+	ClearStorage(storageID string, done func(error))
 	// Cookie operations address the default page store. Calls and exactly-once
 	// completions run on main; ListCookies returns independent Go values:
 	// every cookie, or with an http or https url the cookies a request to

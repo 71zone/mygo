@@ -5,6 +5,9 @@ package darwin
 import (
 	"crypto/sha1"
 	"fmt"
+	"strings"
+
+	"github.com/ebitengine/purego/objc"
 
 	"github.com/egoist/mygo/internal/platform"
 )
@@ -49,4 +52,50 @@ func dataStore(storageID string) id {
 	uuid := send(send(class("NSUUID"), "alloc"), "initWithUUIDString:", uintptr(nsString(storageUUID(storageID))))
 	defer release(uuid)
 	return send(class("WKWebsiteDataStore"), "dataStoreForIdentifier:", uintptr(uuid))
+}
+
+// ClearStorage deletes all the website data of a StorageID's data store,
+// as ClearBrowsingData does of the default one. It clears the store
+// rather than removing it (removeDataStoreForIdentifier:), which fails
+// while a web view uses the store. A store that does not exist has no
+// data, and asking for it with dataStoreForIdentifier: would make it, so
+// the call looks for it among the stores WebKit lists first.
+func (a appController) ClearStorage(storageID string, done func(error)) {
+	if err := checkStorage(storageID); err != nil {
+		done(err)
+		return
+	}
+	withPool(func() {
+		// Listing stores before WebKit has started crashes it
+		// (fetchAllDataStoreIdentifiers: dispatches to a run loop that does
+		// not exist yet); making a configuration starts it.
+		release(send(send(class("WKWebViewConfiguration"), "alloc"), "init"))
+		listed := newBlock(func(_ objc.Block, identifiers id) {
+			// The array is the block's own, and WebKit may call from any
+			// thread: the lookup is made here, the clearing on main.
+			found := storeListed(identifiers, storageUUID(storageID))
+			a.b.runOnMain(func() {
+				if !found {
+					done(nil)
+					return
+				}
+				withPool(func() { a.clearDataStore(dataStore(storageID), done) })
+			})
+		})
+		send(class("WKWebsiteDataStore"), "fetchAllDataStoreIdentifiers:", uintptr(listed))
+		listed.Release()
+	})
+}
+
+// storeListed reports whether the NSArray of NSUUIDs identifiers has the
+// UUID uuid, in its text form.
+func storeListed(identifiers id, uuid string) (found bool) {
+	withPool(func() {
+		for _, u := range arrayItems(identifiers) {
+			if strings.EqualFold(goString(send(u, "UUIDString")), uuid) {
+				found = true
+			}
+		}
+	})
+	return found
 }
