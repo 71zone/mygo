@@ -297,6 +297,10 @@ type Window struct {
 	senderURL     string
 	senderTrusted bool
 	senderGen     uint64
+	// domLoaded reports that the backend told DOMContentLoaded of the
+	// current page, which only a page that is not trusted needs. Main
+	// thread only.
+	domLoaded bool
 	// html is the document LoadHTML loaded, while it is the page's or
 	// about to be. Main thread only.
 	html *htmlDocument
@@ -1600,7 +1604,9 @@ func (p *Page) OnDidNavigate(fn func(url string)) (off func()) {
 	return p.w.onDidNavigate.add(fn, false)
 }
 
-// OnDOMReady is called when the page's DOM is ready (DOMContentLoaded).
+// OnDOMReady is called when the page's DOM is ready (DOMContentLoaded),
+// once for every document, whether or not it has the bridge (see
+// PageOptions.TrustedOrigins).
 func (p *Page) OnDOMReady(fn func()) (off func()) { return p.w.onDOMReady.add(fn, false) }
 
 // OnDidFinishLoad is called when the page finished loading.
@@ -1757,6 +1763,7 @@ func (h *windowHandler) NavigationCommitted(url string) {
 		}
 	}
 	h.w.trusted = h.w.isTrusted(url)
+	h.w.domLoaded = false
 	h.w.outMu.Lock()
 	h.w.domReady = false
 	h.w.outMu.Unlock()
@@ -1764,9 +1771,24 @@ func (h *windowHandler) NavigationCommitted(url string) {
 	fire1(&h.w.onDidNavigate, url)
 }
 
+// DOMContentLoaded is the backend telling, in its own way, that the DOM of
+// the page is ready: the page cannot say it, post it or see it. A trusted
+// page's bridge says it too, and that message is the one that counts, as it
+// sends the events held for the page; so this is for a page without the
+// bridge, and the backend's word is taken once for a document.
+func (h *windowHandler) DOMContentLoaded() {
+	w := h.w
+	if w.trusted || w.domLoaded {
+		return
+	}
+	w.domLoaded = true
+	fire(&w.onDOMReady)
+	w.readyToShow()
+}
+
 func (h *windowHandler) LoadFinished() {
 	fire(&h.w.onDidFinishLoad)
-	// Pages without the bridge (e.g. images) never report DOM ready.
+	// Documents with no DOM (e.g. images) never report DOM ready.
 	h.w.readyToShow()
 }
 

@@ -127,3 +127,57 @@ func TestUntrustedCallsFail(t *testing.T) {
 		t.Errorf("the page's own call: %v", m)
 	}
 }
+
+// TestDOMReadyWithoutBridge: a page that is not trusted has no bridge to
+// tell that its DOM is ready: the backend tells, in a way the page cannot
+// post to, once for each document and before the load finishes. A trusted
+// page's bridge tells, and the backend's word is not what counts for it.
+func TestDOMReadyWithoutBridge(t *testing.T) {
+	w, fw := testWindow(t, WindowOptions{})
+	effects := watchEffects(w)
+	var finished, shown atomic.Int32
+	w.Page().OnDidFinishLoad(func() { finished.Add(1) })
+	w.OnReadyToShow(func() { shown.Add(1) })
+	navigate := func(url string) { onMain(func() { fw.H.NavigationCommitted(url) }) }
+	check := func(what string, ready, loads int32) {
+		t.Helper()
+		if n := effects.domReady.Load(); n != ready || finished.Load() != loads {
+			t.Errorf("%s: OnDOMReady ran %d times, want %d, with %d loads finished, want %d", what, n, ready, finished.Load(), loads)
+		}
+	}
+
+	// A page that is not trusted: the backend's word, at DOM ready and not
+	// at the end of the load, once for a document. The window is ready to
+	// show then too.
+	navigate("https://evil.example/")
+	check("a page that is not trusted, committed", 0, 0)
+	onMain(fw.H.DOMContentLoaded)
+	check("a page that is not trusted, DOM ready", 1, 0)
+	if shown.Load() != 1 {
+		t.Errorf("OnReadyToShow ran %d times at DOMContentLoaded", shown.Load())
+	}
+	onMain(fw.H.DOMContentLoaded)
+	pageAt(fw, "https://evil.example/", `{"t":"dom-ready"}`) // a forgery, as the other tests post
+	onMain(fw.H.LoadFinished)
+	check("a page that is not trusted, finished", 1, 1)
+
+	// The next document of the page, as a reload or a navigation commits one.
+	navigate("https://evil.example/")
+	onMain(fw.H.DOMContentLoaded)
+	onMain(fw.H.LoadFinished)
+	check("a page that is not trusted, again", 2, 2)
+	navigate("https://other.example/")
+	onMain(fw.H.DOMContentLoaded)
+	onMain(fw.H.LoadFinished)
+	check("another page that is not trusted", 3, 3)
+
+	// A trusted page: its bridge tells, and the backend's word is not what
+	// counts for it.
+	navigate("about:blank")
+	onMain(fw.H.DOMContentLoaded)
+	onMain(fw.H.LoadFinished)
+	check("a trusted page, before its bridge told", 3, 4)
+	page(fw, `{"t":"dom-ready"}`)
+	onMain(fw.H.DOMContentLoaded)
+	check("a trusted page", 4, 4)
+}
