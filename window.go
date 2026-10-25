@@ -2,6 +2,7 @@ package mygo
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"log"
@@ -316,13 +317,19 @@ type Window struct {
 	// their calls made them, with the page's token.
 	closedEarly map[int64]string
 
-	outMu    sync.Mutex
+	outMu sync.Mutex
+	// outbox is what the page shown now is to hear, which flush sends; a
+	// navigation drops it.
 	outbox   []message
 	flushing bool
 	// held keeps events until the page's DOM is ready, so events sent right
 	// after creating a window or during a navigation are not lost.
 	held     []message
 	domReady bool
+	// docToken names the document whose dom-ready the core took, which
+	// flush sends the outbox for (empty before that, and after a
+	// navigation).
+	docToken string
 
 	onClose            listeners[func(*CloseEvent)]
 	onClosed           listeners[func()]
@@ -1490,29 +1497,38 @@ func (w *Window) enqueue(msg message, event bool) {
 
 func (w *Window) flush() {
 	w.outMu.Lock()
-	msgs := w.outbox
+	msgs, token := w.outbox, w.docToken
 	w.outbox = nil
 	w.flushing = false
 	w.outMu.Unlock()
 	if w.native == nil || len(msgs) == 0 {
 		return
 	}
-	size := 64
+	size := 96 + len(token)
 	for _, m := range msgs {
 		size += m.len() + 1
 	}
 	js := make([]byte, 0, size)
 	// A script shaped like a.b(JSON) runs without being compiled: WebKit's
 	// JavaScriptCore parses the value as JSON unless the inspector is on,
-	// several times faster. Pages without the runtime only throw.
-	js = append(js, "__mygo.receive(["...)
+	// several times faster. __mygo is the bridge's in every page (pinned at
+	// document start, where the page is not trusted it only ignores this),
+	// and a document other than the one that named token ignores it too:
+	// the web view may show another page by now than the one Go heard of.
+	js = append(js, "__mygo.deliver({"...)
+	if token != "" {
+		js = append(js, `"d":`...)
+		js, _ = jsontext.AppendQuote(js, token)
+		js = append(js, ',')
+	}
+	js = append(js, `"m":[`...)
 	for i, m := range msgs {
 		if i > 0 {
 			js = append(js, ',')
 		}
 		js = m.appendTo(js)
 	}
-	js = append(js, "])"...)
+	js = append(js, "]})"...)
 	// js is not used again, so the script can share its memory.
 	w.native.Eval(unsafe.String(unsafe.SliceData(js), len(js)))
 }
@@ -1766,6 +1782,8 @@ func (h *windowHandler) NavigationCommitted(url string) {
 	h.w.domLoaded = false
 	h.w.outMu.Lock()
 	h.w.domReady = false
+	h.w.docToken = ""
+	h.w.outbox = nil // all of it was for the document that went
 	h.w.outMu.Unlock()
 	h.w.resetPage()
 	fire1(&h.w.onDidNavigate, url)

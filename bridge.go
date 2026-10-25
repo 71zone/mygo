@@ -281,6 +281,7 @@ func (w *Window) handleMessage(msg, pageURL string) {
 	case "dom-ready":
 		w.outMu.Lock()
 		w.domReady = true
+		w.docToken = m.K // the document the events held are for
 		w.outbox = append(w.outbox, w.held...)
 		w.held = nil
 		w.outMu.Unlock()

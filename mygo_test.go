@@ -118,13 +118,9 @@ func received(t *testing.T, fw *fake.Window, pred func(m map[string]any) bool) m
 	var found map[string]any
 	if wait.Poll(func() bool {
 		for _, s := range fw.Scripts() {
-			const prefix = "__mygo.receive("
-			if !strings.HasPrefix(s, prefix) {
+			_, msgs, ok := delivery(t, s)
+			if !ok {
 				continue
-			}
-			var msgs []map[string]any
-			if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(s, prefix), ")")), &msgs); err != nil {
-				t.Fatalf("bad script %q: %v", s, err)
 			}
 			for _, m := range msgs {
 				if pred(m) {
@@ -711,20 +707,33 @@ func (s *streamer) Wait(ctx context.Context, ch *Channel[string]) error {
 	return ctx.Err()
 }
 
+// delivery decodes a script the core evaluated to deliver messages to the
+// page, __mygo.deliver({"d":document,"m":[...]}): the document it names, if
+// it does, and the messages. ok is false for any other script.
+func delivery(t *testing.T, s string) (doc string, msgs []map[string]any, ok bool) {
+	t.Helper()
+	const prefix = "__mygo.deliver("
+	if !strings.HasPrefix(s, prefix) {
+		return "", nil, false
+	}
+	var b struct {
+		D string           `json:"d"`
+		M []map[string]any `json:"m"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(s, prefix), ")")), &b); err != nil {
+		t.Fatalf("bad script %q: %v", s, err)
+	}
+	return b.D, b.M, true
+}
+
 // pageMessages returns the messages the page received, in order.
 func pageMessages(t *testing.T, fw *fake.Window) []map[string]any {
 	t.Helper()
 	var out []map[string]any
 	for _, s := range fw.Scripts() {
-		const prefix = "__mygo.receive("
-		if !strings.HasPrefix(s, prefix) {
-			continue
+		if _, msgs, ok := delivery(t, s); ok {
+			out = append(out, msgs...)
 		}
-		var msgs []map[string]any
-		if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(s, prefix), ")")), &msgs); err != nil {
-			t.Fatalf("bad script %q: %v", s, err)
-		}
-		out = append(out, msgs...)
 	}
 	return out
 }

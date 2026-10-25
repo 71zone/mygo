@@ -32,7 +32,8 @@ export type Outgoing =
   /** Channel c took the values up to the n-th. */
   | { t: "chan-ack"; c: number; k: string; n: number }
   | { t: "chan-close"; c: number; k: string }
-  | { t: "dom-ready" }
+  /** The document is ready; k is its token (see Batch). */
+  | { t: "dom-ready"; k: string }
   | { t: "drag" }
   | { t: "dblclick" };
 
