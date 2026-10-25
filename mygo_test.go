@@ -170,8 +170,8 @@ func TestWindowDefaults(t *testing.T) {
 		t.Error("Tab should reach links and form controls by default")
 	}
 	// The bridge configuration, then the settings of the desktop, which it
-	// tells.
-	if len(o.UserScripts) != 2 || !strings.Contains(o.UserScripts[0].Source, `"windowId":`+fmt.Sprint(w.ID())) {
+	// tells, and the script that hides the channel to Go from frames.
+	if len(o.UserScripts) != 3 || !strings.Contains(o.UserScripts[0].Source, `"windowId":`+fmt.Sprint(w.ID())) {
 		t.Errorf("bridge script not configured: %v", o.UserScripts)
 	}
 	if !w.IsVisible() {
@@ -217,9 +217,9 @@ func TestWindowOptions(t *testing.T) {
 	if c := o.BackgroundColor; c == nil || *c != (platform.Color{R: 0x11, G: 0x22, B: 0x33, A: 0x80}) {
 		t.Errorf("background color: %v", c)
 	}
-	// The bridge configuration, the settings of the desktop, then the app's
-	// preload script.
-	if len(o.UserScripts) != 3 || o.UserScripts[2].Source != "window.x = 1" {
+	// The bridge configuration, the settings of the desktop, the app's
+	// preload script, then the script hiding the channel to Go from frames.
+	if len(o.UserScripts) != 4 || o.UserScripts[2].Source != "window.x = 1" {
 		t.Errorf("preload script: %v", o.UserScripts)
 	}
 	if o.Parent == nil {
@@ -1856,7 +1856,7 @@ func TestThemePreferencesReachThePage(t *testing.T) {
 		t.Errorf("preferences after a change = %+v", p)
 	}
 	scripts := onMainValue(func() []platform.UserScript { return slices.Clone(fw.Opts.UserScripts) })
-	if len(scripts) != 3 || !strings.Contains(scripts[0].Source, `"secret"`) || scripts[2].Source != "preload();" {
+	if len(scripts) != 4 || !strings.Contains(scripts[0].Source, `"secret"`) || scripts[2].Source != "preload();" {
 		t.Errorf("user scripts after a change = %+v", scripts)
 	} else if src := scripts[preferencesScriptIndex].Source; !strings.Contains(src, `"accent":null`) || !strings.Contains(src, `"textScale":2`) {
 		t.Errorf("preferences script after a change = %s", src)
@@ -1882,8 +1882,8 @@ func TestPreferencesScriptAtDocumentStart(t *testing.T) {
 
 	_, fw := testWindow(t, WindowOptions{Page: PageOptions{PreloadScript: "preload();"}})
 	scripts := fw.Opts.UserScripts
-	if len(scripts) != 3 {
-		t.Fatalf("UserScripts = %d, want the bridge, the preferences and the preload script", len(scripts))
+	if len(scripts) != 4 {
+		t.Fatalf("UserScripts = %d, want the bridge, the preferences, the preload script and the one hiding the channel", len(scripts))
 	}
 	if !strings.Contains(scripts[0].Source, `"secret"`) {
 		t.Error("the bridge configuration does not come first")
@@ -1895,7 +1895,7 @@ func TestPreferencesScriptAtDocumentStart(t *testing.T) {
 		}
 	}
 	if scripts[2].Source != "preload();" {
-		t.Errorf("preload script = %q, want it last", scripts[2].Source)
+		t.Errorf("preload script = %q, want it after the bridge's", scripts[2].Source)
 	}
 }
 

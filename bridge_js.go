@@ -25,7 +25,7 @@ func (w *Window) sendTitleBar() {}
 
 func (w *Window) handleMessage(msg, pageURL string) {}
 
-func findScript(text string, opts FindOptions) string { return "" }
+func (w *Window) findScript(text string, opts FindOptions) string { return "" }
 
 func preferencesScript() string { return "" }
 

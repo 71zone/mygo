@@ -3,9 +3,151 @@
 package mygo
 
 import (
+	"encoding/json/v2"
+	"net/http"
+	"net/url"
+	"regexp"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/egoist/mygo/internal/bridge"
+	"github.com/egoist/mygo/internal/schemehost"
 )
+
+// dnsName is how trust.ts tells the hosts WebView2 serves a scheme at.
+var dnsName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
+
+// bridgeHosted is what the bridge in the page does with Trust.Hosted for
+// the host of a page at http (isHosted of trust.ts).
+func bridgeHosted(tr bridge.Trust, hostname string) bool {
+	for _, s := range tr.Hosted {
+		web := s + ".localhost"
+		if hostname == web {
+			return true
+		}
+		if host, ok := strings.CutSuffix(hostname, "."+web); ok && len(host) <= 253 && dnsName.MatchString(host) {
+			return true
+		}
+	}
+	return false
+}
+
+// bridgeAllows is what the bridge in the page does with its Trust
+// (packages/bridge/src/trust.ts), for a page at rawURL.
+func bridgeAllows(tr bridge.Trust, rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	scheme, host := strings.ToLower(u.Scheme), strings.ToLower(u.Host)
+	if slices.Contains(tr.Schemes, scheme) || slices.Contains(tr.Origins, "*") || slices.Contains(tr.Origins, scheme+"://"+host) {
+		return true
+	}
+	if scheme == "http" && u.Port() == "" && u.User == nil && bridgeHosted(tr, strings.ToLower(u.Hostname())) {
+		return true
+	}
+	return tr.Loopback && (scheme == "http" || scheme == "https") && slices.Contains([]string{"localhost", "127.0.0.1", "::1"}, strings.ToLower(u.Hostname()))
+}
+
+// TestBridgeTrust: the pages that get the bridge are those isTrusted
+// trusts. The cases are those of packages/bridge/src/trust.test.ts.
+func TestBridgeTrust(t *testing.T) {
+	if err := Protocol.Handle("trusted", http.NotFoundHandler()); err != nil {
+		t.Fatal(err)
+	}
+	defer Protocol.Unhandle("trusted")
+	t.Setenv("MYGO_DEV_URL", "http://localhost:5173")
+	urls := []string{
+		"https://evil.example/",
+		"https://partner.example/page",
+		"HTTPS://Partner.Example/page",
+		"https://partner.example.evil.com/",
+		"http://partner.example/",
+		"trusted://localhost/",
+		"trusted://abc/",
+		"trusted://a.b/page?q=1",
+		"mygo://localhost/index.html",
+		"mygo://abc/index.html",
+		"other://abc/",
+		"file:///tmp/index.html",
+		"about:blank",
+		"data:text/html,x",
+		"http://localhost:5173/",
+		"http://localhost:5174/", // loopback in development
+		"https://127.0.0.1:8443/",
+		"http://[::1]:3000/",
+		"http://192.168.1.2:5173/",
+		"http://abc.trusted.localhost/", // how WebView2 serves trusted://abc/; elsewhere a server on the loopback interface
+		"http://ABC.Trusted.localhost/",
+		"http://abc.other.localhost/",
+		"http://evilmygo.localhost/",
+		"http://abc.trusted.localhost.evil.example/",
+		"http://trusted.localhost:8080/",
+		"http://abc.trusted.localhost:8080/",
+		"http://user@abc.trusted.localhost/",
+		"http://user:pw@trusted.localhost/",
+		"https://user@partner.example/",
+		"https://abc.trusted.localhost/",
+		"http://a_b.trusted.localhost/",
+		"http://-a.trusted.localhost/",
+		"http://a-.trusted.localhost/",
+		"http://" + strings.Repeat("a", 64) + ".trusted.localhost/",
+		"http://" + strings.Repeat("a", 63) + ".trusted.localhost/",
+		"ftp://localhost/",
+	}
+	for _, windows := range []bool{false, true} {
+		defer func(v bool) { schemeHosts = v }(schemeHosts)
+		schemeHosts = windows
+		for _, opts := range []PageOptions{{TrustedOrigins: []string{"https://partner.example/"}}, {TrustedOrigins: []string{"*"}}, {}} {
+			w := &Window{trustedOrigins: opts.TrustedOrigins}
+			tr := w.bridgeTrust()
+			if tr.Schemes == nil || tr.Origins == nil {
+				t.Fatalf("Trust must hold arrays: %+v", tr)
+			}
+			for _, u := range urls {
+				pageURL := u
+				if windows {
+					// WebView2 serves custom schemes at http://[<host>.]<scheme>.localhost,
+					// and the backend maps the URL back for the core.
+					pageURL = schemehost.WebURL(u, isAppScheme)
+				}
+				hasScheme := func(s string) bool { return windows && isAppScheme(s) }
+				if got, want := bridgeAllows(tr, pageURL), w.isTrusted(schemehost.AppURL(pageURL, hasScheme)); got != want {
+					t.Errorf("windows=%v %v: the bridge allows %s: %v, isTrusted: %v", windows, opts.TrustedOrigins, pageURL, got, want)
+				}
+			}
+		}
+	}
+}
+
+// TestBridgeScripts: every page gets the preload script, the bridge only
+// decides for itself what trust it has, and the frames inside get the
+// script that hides the channel to Go.
+func TestBridgeScripts(t *testing.T) {
+	_, fw := testWindow(t, WindowOptions{Page: PageOptions{PreloadScript: "window.preloaded = 1", TrustedOrigins: []string{"https://Partner.example/"}}})
+	scripts := fw.UserScripts()
+	if len(scripts) != 4 {
+		t.Fatalf("scripts: %d, want the bridge, the preferences, the preload script and the one hiding the channel", len(scripts))
+	}
+	var cfg struct {
+		Trust bridge.Trust `json:"trust"`
+	}
+	m := strings.LastIndex(scripts[0].Source, "})(")
+	if err := json.Unmarshal([]byte(strings.TrimSuffix(scripts[0].Source[m+3:], ");")), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(cfg.Trust.Origins, "https://partner.example") || !slices.Contains(cfg.Trust.Schemes, "about") {
+		t.Errorf("trust in the bridge configuration: %+v", cfg.Trust)
+	}
+	if scripts[0].AllFrames || scripts[2].AllFrames || scripts[2].Source != "window.preloaded = 1" {
+		t.Errorf("the bridge and the preload script are for the top frame: %+v", scripts)
+	}
+	if hide := scripts[3]; !hide.AllFrames || hide.Source != bridge.HideScript {
+		t.Errorf("the last script hides the channel from every frame: %+v", hide)
+	}
+}
 
 // forgeries are the messages a page that has the secret and a way to the
 // native channel could post besides calls.
@@ -180,4 +322,19 @@ func TestDOMReadyWithoutBridge(t *testing.T) {
 	page(fw, `{"t":"dom-ready"}`)
 	onMain(fw.H.DOMContentLoaded)
 	check("a trusted page", 4, 4)
+}
+
+// TestFindScript: FindInPage asks the bridge through window.__mygo, which
+// every page has (the bridge pins it at document start), trusted or not:
+// the script brings nothing, and uses no object a page could define.
+func TestFindScript(t *testing.T) {
+	w, fw := testWindow(t, WindowOptions{})
+	const want = `window.__mygo.find("x", {"backward":false,"matchCase":false,"next":false})`
+	if got := w.findScript("x", FindOptions{}); got != want {
+		t.Errorf("trusted page: %s", got)
+	}
+	onMain(func() { fw.H.NavigationCommitted("https://evil.example/") })
+	if got := w.findScript("x", FindOptions{}); got != want {
+		t.Errorf("untrusted page: %s", got)
+	}
 }

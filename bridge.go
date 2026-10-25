@@ -8,6 +8,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -29,7 +30,35 @@ func (w *Window) bridgeScript() string {
 		Secret:   w.secret,
 		Locale:   App.Locale(),
 		Dir:      appDir(),
+		Trust:    w.bridgeTrust(),
 	})
+}
+
+// bridgeTrust is the rule of isTrusted as data, for the bridge in the page,
+// which gives its page none of itself unless the page is trusted. Keep the
+// two in step (TestBridgeTrust).
+func (w *Window) bridgeTrust() bridge.Trust {
+	t := bridge.Trust{
+		Schemes:  []string{"about", "file"},
+		Origins:  []string{},
+		Hosted:   []string{},
+		Loopback: IsDev(),
+	}
+	// The frontend's scheme is among them.
+	for _, s := range Protocol.schemes() {
+		t.Schemes = append(t.Schemes, s)
+		if schemeHosts {
+			// How WebView2 names the pages of a custom scheme (schemehost).
+			t.Hosted = append(t.Hosted, s)
+		}
+	}
+	if u, err := url.Parse(devURL()); err == nil && u.Host != "" {
+		t.Origins = append(t.Origins, strings.ToLower(u.Scheme+"://"+u.Host))
+	}
+	for _, o := range w.trustedOrigins {
+		t.Origins = append(t.Origins, strings.ToLower(strings.TrimSuffix(o, "/")))
+	}
+	return t
 }
 
 // preferencesScriptIndex is the place of preferencesScript in a window's
@@ -37,13 +66,16 @@ func (w *Window) bridgeScript() string {
 const preferencesScriptIndex = 1
 
 // pageScripts are the scripts a page of the window gets at document start:
-// the bridge, the preferences of the page and the preload script.
+// the bridge, the preferences of the page and the preload script, which
+// the top frame gets, and the one that hides the channel to Go from every
+// other frame. The bridge only gives pages that are trusted a window.mygo;
+// the preload script runs in all of them.
 func (w *Window) pageScripts() []platform.UserScript {
 	scripts := []platform.UserScript{{Source: w.bridgeScript()}, {Source: preferencesScript()}}
 	if w.preload != "" {
 		scripts = append(scripts, platform.UserScript{Source: w.preload})
 	}
-	return scripts
+	return append(scripts, platform.UserScript{Source: bridge.HideScript, AllFrames: true})
 }
 
 // localeEvent returns the message of LocaleEvent for locale.
@@ -230,7 +262,8 @@ func (w *Window) handleMessage(msg, pageURL string) {
 	}
 	if !trusted {
 		// Only the bridge of a trusted page has any business with the rest.
-		// What a page that is not trusted still posts stops here.
+		// Pages that are not trusted have no channel to Go, but whatever
+		// still reaches it from them stops here.
 		return
 	}
 	var m struct {
@@ -296,8 +329,10 @@ func (w *Window) trustsSender(pageURL string) bool {
 	return w.senderTrusted
 }
 
-// findScript returns the script with which FindInPage asks the bridge.
-func findScript(text string, opts FindOptions) string {
+// findScript returns the script with which FindInPage asks the bridge, which
+// every page has, trusted or not, as window.__mygo.find: the bridge pins it
+// at document start, so a page cannot answer for it.
+func (w *Window) findScript(text string, opts FindOptions) string {
 	t, _ := jsonv1.Marshal(text)
 	o, _ := jsonv1.Marshal(map[string]bool{"matchCase": opts.MatchCase, "backward": opts.Backward, "next": opts.FindNext})
 	return fmt.Sprintf("window.__mygo.find(%s, %s)", t, o)

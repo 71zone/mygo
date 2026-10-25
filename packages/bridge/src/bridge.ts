@@ -2,6 +2,7 @@
 // The Go side wraps the bundle in a function that defines __MYGO_CONFIG__.
 import { find, stopFind } from "./find";
 import { createRuntime } from "./runtime";
+import { isTrusted } from "./trust";
 import type { BridgeConfig, ThemePreferences } from "./types";
 
 declare const __MYGO_CONFIG__: BridgeConfig;
@@ -10,14 +11,29 @@ declare const __MYGO_CONFIG__: BridgeConfig;
 const INTERACTIVE =
   'input,textarea,select,button,a[href],summary,label,[contenteditable]:not([contenteditable="false"]),video[controls],audio[controls]';
 
+// What the __mygo of a page that is not trusted does with what Go delivers.
+const ignore = () => {};
+
 (() => {
   const w = window as any;
   if (w.__mygo) return;
 
+  // The native channel is taken, and hidden from the page, wherever the page
+  // is from; only the pages Go trusts get the bridge. An untrusted one finds
+  // none of it: neither window.mygo, nor the channel to talk to Go with.
   const raw = transport(w);
-  if (!raw) return;
-  // Only this closure knows the secret: the handler is also reachable from
-  // iframes, whose messages Go must ignore.
+  if (!raw || !isTrusted(location, __MYGO_CONFIG__.trust)) {
+    // Go's scripts reach every page through window.__mygo: replies and
+    // events (receive), the find bar (find). Pinned here, before a script of
+    // the page runs, it is not the page's to define, so what Go says for
+    // another page is lost in this one, and the page gets no say in what
+    // FindInPage reports. (Go does not send a page that is not trusted
+    // anything; this is for the document it could not tell about yet.)
+    Object.defineProperty(w, "__mygo", { value: Object.freeze({ receive: ignore, find, stopFind }) });
+    return;
+  }
+  // Only this closure knows the secret and the channel, so scripts of the
+  // page cannot post messages of their own.
   const post = (m: string) => raw.post(__MYGO_CONFIG__.secret + m);
 
   const { runtime, internal } = createRuntime(__MYGO_CONFIG__, post);
@@ -180,15 +196,38 @@ interface Transport {
   postWithFiles?(message: string, files: FileList): void;
 }
 
+/**
+ * Takes the channel to Go and removes it from the page: the message handler
+ * of WebKit, which the page reaches through the accessor of `webkit`'s
+ * prototype (`webkit` itself cannot be removed), and `chrome.webview` of
+ * WebView2. Scripts the page runs afterwards, and its frames (which the
+ * backends' scripts do the same in), cannot see it, or tell this is not
+ * Safari or Edge.
+ */
 function transport(w: any): Transport | null {
+  const apply = Reflect.apply;
   const handler = w.webkit?.messageHandlers?.mygo;
-  if (handler) return { post: (m) => handler.postMessage(m) };
+  if (handler) {
+    const postMessage = handler.postMessage;
+    try {
+      delete Object.getPrototypeOf(w.webkit).messageHandlers;
+    } catch {
+      // The page keeps what it could not lose.
+    }
+    return { post: (m) => apply(postMessage, handler, [m]) };
+  }
   const webview = w.chrome?.webview;
   if (!webview) return null;
+  const { postMessage, postMessageWithAdditionalObjects } = webview;
+  try {
+    delete w.chrome.webview;
+  } catch {
+    // As above.
+  }
   return {
-    post: (m) => webview.postMessage(m),
-    postWithFiles: webview.postMessageWithAdditionalObjects
-      ? (m, files) => webview.postMessageWithAdditionalObjects(m, files)
+    post: (m) => apply(postMessage, webview, [m]),
+    postWithFiles: postMessageWithAdditionalObjects
+      ? (m, files) => apply(postMessageWithAdditionalObjects, webview, [m, files])
       : undefined,
   };
 }

@@ -7,7 +7,7 @@ type CallMsg = Extract<Outgoing, { t: "call" }>;
 function setup() {
   const sent: Outgoing[] = [];
   const rt = createRuntime(
-    { platform: "darwin", windowId: 7, version: "0.0.0-test", secret: "s", locale: "en", dir: "ltr" },
+    { platform: "darwin", windowId: 7, version: "0.0.0-test", secret: "s", locale: "en", dir: "ltr", trust: { schemes: [], origins: ["*"], hosted: [], loopback: false } },
     (m) => sent.push(JSON.parse(m)),
   );
   return { sent, ...rt };
