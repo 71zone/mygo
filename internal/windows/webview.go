@@ -381,6 +381,8 @@ func (w *window) navigationStarting(_, args uintptr) {
 		clear(w.htmlFor)
 	}
 	w.loading = true
+	w.stopped = false
+	w.navSeq++
 	w.navigating = uri
 	w.h.NavigationStarted(uri)
 }
@@ -407,6 +409,8 @@ func navigationKind(args uintptr) int32 {
 
 func (w *window) navigationCompleted(_, args uintptr) {
 	w.loading = false
+	stopped := w.stopped
+	w.stopped = false
 	var ok int32
 	comCall(args, navCompletedGetIsSuccess, uintptr(unsafe.Pointer(&ok)))
 	if ok != 0 {
@@ -426,10 +430,47 @@ func (w *window) navigationCompleted(_, args uintptr) {
 	}
 	var status int32
 	comCall(args, navCompletedGetWebErrorStatus, uintptr(unsafe.Pointer(&status)))
-	if status == 14 { // COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED: another navigation
-		return
+	switch {
+	case navigationCancelled(status, stopped):
+	case status == webErrorConnectionAborted:
+		// What a navigation another one replaces ends with, once its
+		// request is on its way: the end comes before the start of the one
+		// that replaces it. A server that drops the connection ends the
+		// same way, so it is a failed load unless one starts meanwhile.
+		seq := w.navSeq
+		time.AfterFunc(replacedGrace, func() {
+			w.b.post(func() {
+				if !w.closed && w.navSeq == seq {
+					w.failLoad(status)
+				}
+			})
+		})
+	default:
+		w.failLoad(status)
 	}
+}
+
+func (w *window) failLoad(status int32) {
 	w.h.LoadFailed(w.URL(), int(status), "navigation failed (COREWEBVIEW2_WEB_ERROR_STATUS "+strconv.Itoa(int(status))+")")
+}
+
+// COREWEBVIEW2_WEB_ERROR_STATUS values the backend names.
+const (
+	webErrorConnectionAborted   = 9
+	webErrorHostNameNotResolved = 13
+	webErrorOperationCanceled   = 14
+)
+
+// replacedGrace is how long the end of a navigation with CONNECTION_ABORTED
+// waits for the start of the navigation that replaced it.
+const replacedGrace = 200 * time.Millisecond
+
+// navigationCancelled reports whether a navigation that did not complete
+// ended because it was cancelled, which is no failed load, as on the other
+// platforms: the app prevented it in OnWillNavigate (OPERATION_CANCELED),
+// or Stop ended it (stopped).
+func navigationCancelled(status int32, stopped bool) bool {
+	return status == webErrorOperationCanceled || stopped
 }
 
 // downloadStarting asks where to save a download, instead of WebView2's own
@@ -701,9 +742,14 @@ func (w *window) Reload(ignoreCache bool) {
 	})
 }
 
-func (w *window) StopLoading() { w.withWebView(func() { comCall(w.webview, wvStop) }) }
-func (w *window) GoBack()      { w.withWebView(func() { comCall(w.webview, wvGoBack) }) }
-func (w *window) GoForward()   { w.withWebView(func() { comCall(w.webview, wvGoForward) }) }
+func (w *window) StopLoading() {
+	w.withWebView(func() {
+		w.stopped = w.loading // the web view ends the load with CONNECTION_ABORTED
+		comCall(w.webview, wvStop)
+	})
+}
+func (w *window) GoBack()    { w.withWebView(func() { comCall(w.webview, wvGoBack) }) }
+func (w *window) GoForward() { w.withWebView(func() { comCall(w.webview, wvGoForward) }) }
 
 func (w *window) CanGoBack() bool    { return w.getBool(wvGetCanGoBack) }
 func (w *window) CanGoForward() bool { return w.getBool(wvGetCanGoForward) }

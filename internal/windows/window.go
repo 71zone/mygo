@@ -50,6 +50,10 @@ type window struct {
 	filtersAll    bool
 	hidingScript  string
 	navigating    string
+	// navSeq counts the navigations that started, and stopped tells that
+	// StopLoading ended the load in progress (navigationCompleted).
+	navSeq  uint64
+	stopped bool
 	// reloadAdopted reloads the first document of an adopted popup
 	// (newWindowRequested).
 	reloadAdopted bool
