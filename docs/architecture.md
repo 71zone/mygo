@@ -570,6 +570,12 @@ features GTK 4 lacks become X11-only code beside it.
   keeps Windows from drawing the submenus' arrows over the chevrons;
   `WM_INITMENUPOPUP` gives the menu the background of the items. The items
   keep their strings, which mnemonics, screen readers and the tests read.
+  Windows adds a width of its own to an item's, which MyGo only assumes (the
+  width of a check), and the longest label sets the menu's width with no room
+  to spare, so a label is cut at its highlight's edge, not where its padding
+  starts. `MYGO_MENU_DEBUG=1` logs how each item is measured and drawn (to
+  the file it names, for an app without a console, if not `1`;
+  `menudebug.go`).
   A menu with owner-drawn items loses Windows 11's frame, its window square
   under its class's drop shadow (`CS_DROPSHADOW`) along two sides: while
   menus show (`WM_ENTERMENULOOP` to `WM_EXITMENULOOP`, and around
